@@ -186,14 +186,14 @@ test("parseRelayMessages: real shape", () => {
 
 // --- CLI wrapper (fake exec) ------------------------------------------------
 
-/** Build a fake ExecFn that records calls and returns a scripted result. */
+/** Build a fake ExecFn that records calls, env snapshots, and returns a scripted result. */
 function fakeExec(result: Partial<ExecResultLike> & { onCall?: (cmd: string, args: string[]) => void }): {
   exec: ExecFn;
-  calls: Array<{ command: string; args: string[] }>;
+  calls: Array<{ command: string; args: string[]; env: NodeJS.ProcessEnv }>;
 } {
-  const calls: Array<{ command: string; args: string[] }> = [];
+  const calls: Array<{ command: string; args: string[]; env: NodeJS.ProcessEnv }> = [];
   const exec: ExecFn = async (command, args) => {
-    calls.push({ command, args });
+    calls.push({ command, args, env: { ...process.env } });
     result.onCall?.(command, args);
     return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", code: result.code ?? 0 };
   };
@@ -350,6 +350,45 @@ test("relayDmPoll: empty list when ok=false", async () => {
   const msgs = await new C2cCli({ exec }).relayDmPoll("me#hhhh");
   assert.deepEqual(msgs, []);
   assert.equal(calls[0].args[0], "relay");
+});
+
+test("relay methods clear C2C_MCP_SESSION_ID to avoid ghost cli-* leases", async () => {
+  process.env.C2C_MCP_SESSION_ID = "stale-session";
+  const regJson = JSON.stringify({
+    ok: true,
+    lease: { alias: "a#123", session_id: "s1", node_id: "n1", registered_at: 1, ttl: 60, alive: true },
+  });
+  const { exec: regExec, calls: regCalls } = fakeExec({ stdout: regJson });
+  await new C2cCli({ exec: regExec }).relayRegister("a#123");
+  assert.equal(regCalls[0].env.C2C_MCP_SESSION_ID, undefined);
+
+  const { exec: listExec, calls: listCalls } = fakeExec({
+    stdout: JSON.stringify({ ok: true, peers: [] }),
+  });
+  await new C2cCli({ exec: listExec }).relayList();
+  assert.equal(listCalls[0].env.C2C_MCP_SESSION_ID, undefined);
+
+  const { exec: pollExec, calls: pollCalls } = fakeExec({
+    stdout: JSON.stringify({ ok: true, messages: [] }),
+  });
+  await new C2cCli({ exec: pollExec }).relayDmPoll("a#123");
+  assert.equal(pollCalls[0].env.C2C_MCP_SESSION_ID, undefined);
+
+  delete process.env.C2C_MCP_SESSION_ID;
+});
+
+test("run: per-call sessionId override is restored after invocation", async () => {
+  process.env.C2C_MCP_SESSION_ID = "global";
+  const { exec, calls } = fakeExec({ stdout: "{}" });
+  const cli = new C2cCli({ exec });
+  await cli.run(["relay", "list"], { sessionId: "override" });
+  assert.equal(calls[0].env.C2C_MCP_SESSION_ID, "override");
+  assert.equal(process.env.C2C_MCP_SESSION_ID, "global");
+
+  await cli.run(["list"]);
+  assert.equal(calls[1].env.C2C_MCP_SESSION_ID, "global");
+
+  delete process.env.C2C_MCP_SESSION_ID;
 });
 
 // --- relayToC2c (module-level helper) ----------------------------------------

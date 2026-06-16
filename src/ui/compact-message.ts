@@ -96,10 +96,16 @@ function buildPrefix(
       break;
   }
 
-  if (ascii) {
-    return `${theme.fg(dirColor, dirGlyph)}${theme.fg("borderMuted", routeGlyph)} `;
-  }
-  return `${theme.fg(dirColor, dirGlyph)}${theme.fg("borderMuted", routeGlyph)} `;
+  // Route gets a distinct color so ⌂/◎/⇄ are scannable at a glance.
+  // local=success (green, "your home broker"),
+  // sessions=borderMuted (grey, the in-the-swarm default),
+  // relay=accent (cyan, "this is the cross-machine one").
+  const routeColor: import("@earendil-works/pi-coding-agent").ThemeColor =
+    route === "local" ? "success" :
+    route === "relay" ? "accent" :
+    "borderMuted";
+
+  return `${theme.fg(dirColor, dirGlyph)}${theme.fg(routeColor, routeGlyph)} `;
 }
 
 interface MessageLike<T> {
@@ -179,6 +185,24 @@ function buildStatusLine(envelope: ParsedEnvelope): string {
   return `is ${state}`;
 }
 
+/** Color for a status state. Scannable: idle=green, processing=yellow,
+ *  tool/input=accent (active), unknown=muted. */
+function colorForStatusState(
+  state: string | undefined,
+): import("@earendil-works/pi-coding-agent").ThemeColor {
+  switch (state) {
+    case "idle":
+      return "success";
+    case "processing":
+      return "warning";
+    case "tool":
+    case "input":
+      return "accent";
+    default:
+      return "muted";
+  }
+}
+
 /** Build the single-line collapsed representation. */
 export function buildCompactLine(
   message: MessageLike<C2cDeliveryDetails>,
@@ -210,20 +234,31 @@ export function buildCompactLine(
   parts.push(" " + buildPrefix(direction, route, theme));
 
   if (count <= 1) {
+    // Primary sender in accent so it pops; status state carries its own
+    // semantic color in the snippet below.
     if (primary?.event === "status") {
-      parts.push(theme.fg("text", `${primarySender}`));
+      parts.push(theme.fg("accent", `${primarySender}`));
     } else {
-      parts.push(theme.fg("text", `${primarySender}`));
+      parts.push(theme.fg("accent", `${primarySender}`));
     }
   } else {
-    parts.push(theme.fg("text", `${count} messages`));
+    parts.push(theme.fg("accent", `${count} messages`));
     if (senders.length > 0) {
       parts.push(theme.fg("muted", `from ${senders.join(", ")}`));
     }
   }
 
   if (snippet.length > 0) {
-    parts.push(theme.fg("dim", snippet));
+    // Snippet brightness tracks direction: incoming = full brightness
+    // (I want to read it), outgoing = dim (I know what I sent),
+    // status = muted (just state info, not the message body).
+    const snippetColor =
+      primary?.event === "status"
+        ? "muted"
+        : direction === "outgoing"
+          ? "dim"
+          : "text";
+    parts.push(theme.fg(snippetColor, snippet));
   }
 
   return truncateToWidth(parts.join(theme.fg("borderMuted", " · ")), width);
@@ -265,10 +300,15 @@ export function buildExpandedComponent(
   for (const envelope of envelopes) {
     if (envelope.from) {
       if (envelope.event === "status" && envelope.status) {
+        const stateColor = colorForStatusState(envelope.status.state);
         const statusLine = `${envelope.from}: state=${envelope.status.state} since=${envelope.status.since} ttl_ms=${envelope.status.ttl_ms}`;
-        container.addChild(new Text(theme.fg("text", statusLine), 1, 0));
+        // `from:` in accent, state in semantic color so the eye lands on
+        // the actionable bit (idle vs processing vs tool).
+        container.addChild(
+          new Text(`${theme.fg("accent", `${envelope.from}:`)} ${theme.fg(stateColor, `state=${envelope.status.state}`)} ${theme.fg("muted", `since=${envelope.status.since} ttl_ms=${envelope.status.ttl_ms}`)}`, 1, 0),
+        );
       } else {
-        container.addChild(new Text(theme.fg("text", `${envelope.from}:`), 1, 0));
+        container.addChild(new Text(theme.fg("accent", `${envelope.from}:`), 1, 0));
         container.addChild(new Text(theme.fg("toolOutput", envelope.body), 1, 0));
       }
     }

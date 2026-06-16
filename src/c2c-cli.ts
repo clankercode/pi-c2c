@@ -113,6 +113,33 @@ function setBrokerRootEnv(target: string | undefined): () => void {
   };
 }
 
+/**
+ * Set or clear C2C_MCP_SESSION_ID for the duration of a single c2c invocation.
+ * Returns a restore function.
+ *   - `undefined` (or missing): leave the process-level env untouched.
+ *   - `null`: delete the env var for this invocation.
+ *   - string: set the env var to this value for this invocation.
+ */
+function setSessionIdEnv(target: string | null | undefined): () => void {
+  const KEY = "C2C_MCP_SESSION_ID";
+  if (target === undefined) {
+    return () => {};
+  }
+  const previous = process.env[KEY];
+  if (target === null) {
+    delete process.env[KEY];
+  } else {
+    process.env[KEY] = target;
+  }
+  return () => {
+    if (previous === undefined) {
+      delete process.env[KEY];
+    } else {
+      process.env[KEY] = previous;
+    }
+  };
+}
+
 // --- Pure parsers (unit-tested in isolation) --------------------------------
 
 function asString(v: unknown): string {
@@ -394,10 +421,11 @@ export class C2cCli {
   /** Run a raw `c2c` invocation. Throws C2cError on non-zero exit. */
   async run(
     args: string[],
-    opts?: { signal?: AbortSignal; brokerRoot?: string },
+    opts?: { signal?: AbortSignal; brokerRoot?: string; sessionId?: string | null },
   ): Promise<ExecResultLike> {
     const target = opts?.brokerRoot ?? this.brokerRoot;
-    const restore = setBrokerRootEnv(target);
+    const restoreBroker = setBrokerRootEnv(target);
+    const restoreSession = setSessionIdEnv(opts?.sessionId);
     try {
       const res = await this.exec(this.bin, args, {
         timeout: this.timeoutMs,
@@ -413,7 +441,8 @@ export class C2cCli {
       }
       return res;
     } finally {
-      restore();
+      restoreSession();
+      restoreBroker();
     }
   }
 
@@ -517,13 +546,19 @@ export class C2cCli {
 
   /** Show the local Ed25519 relay identity. */
   async relayIdentity(opts?: { signal?: AbortSignal }): Promise<RelayIdentity | null> {
-    const res = await this.run(["relay", "identity", "show", "--json"], { signal: opts?.signal });
+    const res = await this.run(["relay", "identity", "show", "--json"], {
+      signal: opts?.signal,
+      sessionId: null,
+    });
     return parseRelayIdentity(res.stdout);
   }
 
   /** Print just the SHA256 fingerprint of the local relay identity. */
   async relayFingerprint(opts?: { signal?: AbortSignal }): Promise<string> {
-    const res = await this.run(["relay", "identity", "fingerprint"], { signal: opts?.signal });
+    const res = await this.run(["relay", "identity", "fingerprint"], {
+      signal: opts?.signal,
+      sessionId: null,
+    });
     return parseRelayFingerprint(res.stdout);
   }
 
@@ -532,13 +567,16 @@ export class C2cCli {
     const args = ["relay", "setup"];
     if (opts?.url) args.push("--url", opts.url);
     if (opts?.token) args.push("--token", opts.token);
-    await this.run(args, { signal: opts?.signal });
+    await this.run(args, { signal: opts?.signal, sessionId: null });
   }
 
   /** Show current relay configuration. Returns the parsed JSON or null. */
   async relaySetupShow(opts?: { signal?: AbortSignal }): Promise<Record<string, unknown> | null> {
     try {
-      const res = await this.run(["relay", "setup", "--show"], { signal: opts?.signal });
+      const res = await this.run(["relay", "setup", "--show"], {
+        signal: opts?.signal,
+        sessionId: null,
+      });
       const parsed = JSON.parse(res.stdout);
       return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
     } catch {
@@ -554,7 +592,7 @@ export class C2cCli {
     const args = ["relay", "register", "--alias", alias];
     if (opts?.relayUrl) args.push("--relay-url", opts.relayUrl);
     if (opts?.token) args.push("--token", opts.token);
-    const res = await this.run(args, { signal: opts?.signal });
+    const res = await this.run(args, { signal: opts?.signal, sessionId: null });
     return parseRelayRegister(res.stdout);
   }
 
@@ -563,7 +601,7 @@ export class C2cCli {
     const args = ["relay", "list"];
     if (opts?.relayUrl) args.push("--relay-url", opts.relayUrl);
     if (opts?.token) args.push("--token", opts.token);
-    const res = await this.run(args, { signal: opts?.signal });
+    const res = await this.run(args, { signal: opts?.signal, sessionId: null });
     return parseRelayPeers(res.stdout);
   }
 
@@ -575,7 +613,7 @@ export class C2cCli {
     const args = ["relay", "dm", "poll", "--alias", alias];
     if (opts?.relayUrl) args.push("--relay-url", opts.relayUrl);
     if (opts?.token) args.push("--token", opts.token);
-    const res = await this.run(args, { signal: opts?.signal });
+    const res = await this.run(args, { signal: opts?.signal, sessionId: null });
     return parseRelayMessages(res.stdout);
   }
 
@@ -589,7 +627,7 @@ export class C2cCli {
     const args = ["relay", "dm", "send", "--alias", alias, "--", target, body];
     if (opts?.relayUrl) args.push("--relay-url", opts.relayUrl);
     if (opts?.token) args.push("--token", opts.token);
-    await this.run(args, { signal: opts?.signal });
+    await this.run(args, { signal: opts?.signal, sessionId: null });
   }
 
   /** Broadcast a message to all relay peers, from `alias`. */
@@ -601,6 +639,6 @@ export class C2cCli {
     const args = ["relay", "dm", "send-all", "--alias", alias, "--", body];
     if (opts?.relayUrl) args.push("--relay-url", opts.relayUrl);
     if (opts?.token) args.push("--token", opts.token);
-    await this.run(args, { signal: opts?.signal });
+    await this.run(args, { signal: opts?.signal, sessionId: null });
   }
 }
