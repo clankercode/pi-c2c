@@ -33,11 +33,14 @@ import {
   notifySummary,
 } from "./delivery.ts";
 import { clearSpool, gcStaleSpools, readSpool, writeSpool } from "./spool.ts";
+import { formatStatus, installStatusColorPatch, type PiC2cBarState } from "./status.ts";
+import { collectDebugState } from "./debug.ts";
 
 export const PI_C2C_VERSION = "0.1.0";
 
 const STATUS_KEY = "c2c";
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
+
 const SESSION_ENV = "C2C_MCP_SESSION_ID";
 const SPOOL_DIR = path.join(os.homedir(), ".pi", "c2c");
 const SPOOL_TTL_MS = 7 * 24 * 60 * 60 * 1000; // GC spool files older than a week
@@ -83,6 +86,7 @@ function readAutoJoinRooms(): string[] {
 
 export default function c2cExtension(pi: ExtensionAPI): void {
   // --- per-session state (single process; closure-scoped) -------------------
+  const barState: PiC2cBarState = {};
   let cli: C2cCli | null = null;
   let identity: Identity | null = null;
   let registered = false;
@@ -177,6 +181,10 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       gs.hostSessionEnvCaptured = true;
     }
 
+    // Patch the shared theme singleton so custom footers (pi-bar) render the
+    // c2c status in color even though they strip ANSI from extension values.
+    installStatusColorPatch(ctx.ui.theme, () => barState);
+
     const exec: ExecFn = (command, args, options) =>
       pi.exec(command, args, { ...options, cwd: ctx.cwd });
     cli = new C2cCli({ exec });
@@ -214,10 +222,14 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     gcStaleSpools(SPOOL_DIR, SPOOL_TTL_MS, Date.now());
 
     if (res.ok) {
-      ctx.ui.setStatus(STATUS_KEY, identity.alias);
+      barState.alias = identity.alias;
+      barState.registered = true;
+      ctx.ui.setStatus(STATUS_KEY, formatStatus(identity.alias, true, ctx.ui.theme));
       ctx.ui.notify(`c2c: registered as ${identity.alias}`, "info");
     } else {
-      ctx.ui.setStatus(STATUS_KEY, `${identity.alias}?`);
+      barState.alias = identity.alias;
+      barState.registered = false;
+      ctx.ui.setStatus(STATUS_KEY, formatStatus(identity.alias, false, ctx.ui.theme));
       ctx.ui.notify(
         `c2c: registration failed (${res.error ?? "unknown"}). Tools available; run 'c2c doctor'.`,
         "warning",
@@ -253,6 +265,8 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       pollTimer = null;
     }
     ctx.ui.setStatus(STATUS_KEY, undefined);
+    barState.alias = undefined;
+    barState.registered = false;
   });
 
   // --- helpers for tools/commands -------------------------------------------
@@ -264,6 +278,32 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   const notReadyText = "c2c: not registered yet (broker unreachable?). Run `/c2c-status` or `c2c doctor`.";
 
   // --- tools (LLM-callable) -------------------------------------------------
+
+  pi.registerTool({
+    name: "c2c_pi_debug",
+    label: "c2c pi debug",
+    description: "Return useful debugging metadata as a single text block.",
+    parameters: Type.Object({}),
+    async execute() {
+      const text = collectDebugState({
+        version: PI_C2C_VERSION,
+        identity,
+        registered,
+        ctxRef,
+        barState,
+        pollIntervalMs,
+        hostSessionEnv: gstate().hostSessionEnv,
+        prevSessionId: gstate().prevSessionId,
+        autoJoinRooms: readAutoJoinRooms(),
+        piBarPatched: Boolean((globalThis as Record<string, unknown>).__piC2cStatusFgPatched),
+        spoolDir: SPOOL_DIR,
+        pid: process.pid,
+        cwdFallback: process.cwd(),
+        env: process.env,
+      });
+      return toolText(text);
+    },
+  });
 
   pi.registerTool({
     name: "c2c_send",
