@@ -1,0 +1,156 @@
+import { describe, it } from "node:test";
+import assert from "node:assert";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import {
+  buildCompactLine,
+  buildExpandedComponent,
+  CompactC2cMessage,
+  parseC2cEnvelopes,
+  type C2cDeliveryDetails,
+} from "../../src/ui/compact-message.ts";
+
+const plainTheme = {
+  fg: (_color: string, text: string) => text,
+  bg: (_color: string, text: string) => text,
+  bold: (text: string) => text,
+  italic: (text: string) => text,
+  strikethrough: (text: string) => text,
+} as unknown as Theme;
+
+function makeMessage(
+  content: string,
+  details?: Partial<C2cDeliveryDetails>,
+): { content: string; details?: C2cDeliveryDetails } {
+  return {
+    content,
+    details: details
+      ? ({
+          count: details.count ?? 1,
+          senders: details.senders ?? ["c2c"],
+        } as C2cDeliveryDetails)
+      : undefined,
+  };
+}
+
+function envelope(from: string, body: string): string {
+  return `<c2c event="message" from="${from}" to="me" source="broker" reply_via="c2c_send" action_after="continue">\n${body}\n</c2c>`;
+}
+
+describe("parseC2cEnvelopes", () => {
+  it("extracts sender and body from a single envelope", () => {
+    const parsed = parseC2cEnvelopes(envelope("lyra-quill", "hello world"));
+    assert.strictEqual(parsed.length, 1);
+    assert.strictEqual(parsed[0].from, "lyra-quill");
+    assert.strictEqual(parsed[0].body, "hello world");
+  });
+
+  it("extracts multiple envelopes", () => {
+    const content = [envelope("a", "one"), envelope("b", "two")].join("\n\n");
+    const parsed = parseC2cEnvelopes(content);
+    assert.strictEqual(parsed.length, 2);
+    assert.deepStrictEqual(
+      parsed.map((e) => ({ from: e.from, body: e.body })),
+      [
+        { from: "a", body: "one" },
+        { from: "b", body: "two" },
+      ],
+    );
+  });
+
+  it("trims leading/trailing newlines from the body", () => {
+    const parsed = parseC2cEnvelopes(envelope("x", "\n\ninner\n\n"));
+    assert.strictEqual(parsed[0].body, "inner");
+  });
+
+  it("falls back to treating raw content as a single message", () => {
+    const parsed = parseC2cEnvelopes("just some text");
+    assert.strictEqual(parsed.length, 1);
+    assert.strictEqual(parsed[0].from, "c2c");
+    assert.strictEqual(parsed[0].body, "just some text");
+  });
+
+  it("returns an empty array for empty content", () => {
+    assert.deepStrictEqual(parseC2cEnvelopes(""), []);
+    assert.deepStrictEqual(parseC2cEnvelopes("   \n  "), []);
+  });
+});
+
+describe("buildCompactLine", () => {
+  it("stays within the requested width", () => {
+    const msg = makeMessage(envelope("lyra-quill", "A".repeat(200)));
+    const line = buildCompactLine(msg, plainTheme, 40);
+    assert.strictEqual(visibleWidth(line), 40);
+  });
+
+  it("shows the sender and a snippet for a single message", () => {
+    const msg = makeMessage(envelope("lyra-quill", "ERROR: timeout"));
+    const line = buildCompactLine(msg, plainTheme, 80);
+    assert.ok(line.includes("lyra-quill"));
+    assert.ok(line.includes("ERROR: timeout"));
+    assert.ok(line.includes("◈ c2c"));
+  });
+
+  it("shows the count and senders for multiple messages", () => {
+    const content = [envelope("a", "one"), envelope("b", "two")].join("\n\n");
+    const msg = makeMessage(content, { count: 2, senders: ["a", "b"] });
+    const line = buildCompactLine(msg, plainTheme, 80);
+    assert.ok(line.includes("2 messages"));
+    assert.ok(line.includes("a"));
+    assert.ok(line.includes("b"));
+  });
+
+  it("handles non-envelope content gracefully", () => {
+    const msg = makeMessage("raw text");
+    const line = buildCompactLine(msg, plainTheme, 80);
+    assert.ok(line.includes("raw text"));
+  });
+
+  it("handles content arrays by treating them as empty", () => {
+    const msg = { content: [{ type: "text" }] as unknown[], details: { count: 1, senders: ["x"] } as C2cDeliveryDetails };
+    const line = buildCompactLine(msg, plainTheme, 40);
+    assert.ok(line.includes("from x"));
+    assert.ok(visibleWidth(line) <= 40);
+  });
+});
+
+describe("CompactC2cMessage", () => {
+  it("is one line collapsed and many lines expanded", () => {
+    const content = [envelope("a", "line one\nline two"), envelope("b", "line three")].join("\n\n");
+    const msg = makeMessage(content, { count: 2, senders: ["a", "b"] });
+    assert.strictEqual(new CompactC2cMessage(msg, false, plainTheme).render(80).length, 1);
+    assert.ok(new CompactC2cMessage(msg, true, plainTheme).render(80).length > 1);
+  });
+
+  it("caches render output for the same width", () => {
+    const msg = makeMessage(envelope("x", "hello"));
+    const component = new CompactC2cMessage(msg, false, plainTheme);
+    const a = component.render(80);
+    const b = component.render(80);
+    assert.strictEqual(a, b);
+    component.invalidate();
+    const c = component.render(80);
+    assert.notStrictEqual(a, c);
+  });
+});
+
+describe("buildExpandedComponent", () => {
+  it("renders a header and the body", () => {
+    const msg = makeMessage(envelope("lyra-quill", "hello\nworld"));
+    const lines = buildExpandedComponent(msg, plainTheme).render(80);
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("message from lyra-quill"));
+    assert.ok(joined.includes("hello"));
+    assert.ok(joined.includes("world"));
+  });
+
+  it("renders multiple messages", () => {
+    const content = [envelope("a", "one"), envelope("b", "two")].join("\n\n");
+    const msg = makeMessage(content, { count: 2, senders: ["a", "b"] });
+    const lines = buildExpandedComponent(msg, plainTheme).render(80);
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("2 messages"));
+    assert.ok(joined.includes("a:"));
+    assert.ok(joined.includes("b:"));
+  });
+});

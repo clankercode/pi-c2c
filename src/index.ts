@@ -35,6 +35,22 @@ import {
 import { clearSpool, gcStaleSpools, readSpool, writeSpool } from "./spool.ts";
 import { formatStatus, installStatusColorPatch, type PiC2cBarState } from "./status.ts";
 import { collectDebugState } from "./debug.ts";
+import { registerC2cMessageRenderer, type C2cDeliveryDetails } from "./ui/compact-message.ts";
+import {
+  renderInboxResult,
+  renderJoinRoomResult,
+  renderListResult,
+  renderRoomsResult,
+  renderSendCall,
+  renderSendResult,
+  renderWhoamiResult,
+  type InboxToolDetails,
+  type ListToolDetails,
+  type RoomToolDetails,
+  type RoomsToolDetails,
+  type SendToolDetails,
+  type WhoamiToolDetails,
+} from "./ui/tool-renderers.ts";
 
 export const PI_C2C_VERSION = "0.1.0";
 
@@ -68,8 +84,8 @@ function gstate(): PiC2cGlobal {
 }
 
 /** A pi tool/command result is a list of text blocks plus opaque details. */
-function toolText(text: string) {
-  return { content: [{ type: "text" as const, text }], details: undefined };
+function toolText(text: string, details?: unknown) {
+  return { content: [{ type: "text" as const, text }], details };
 }
 
 /**
@@ -126,6 +142,7 @@ function readAutoJoinRooms(): string[] {
 }
 
 export default function c2cExtension(pi: ExtensionAPI): void {
+  registerC2cMessageRenderer(pi);
   // --- per-session state (single process; closure-scoped) -------------------
   const barState: PiC2cBarState = {};
   let cli: C2cCli | null = null;
@@ -170,9 +187,13 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   function inject(novel: C2cMessage[]): boolean {
     if (novel.length === 0) return true;
     const body = novel.map((m) => formatEnvelope(m, identity?.alias)).join("\n\n");
+    const details: C2cDeliveryDetails = {
+      count: novel.length,
+      senders: [...new Set(novel.map((m) => m.from_alias || "unknown"))],
+    };
     const idle = ctxRef?.isIdle() ?? true;
     try {
-      pi.sendMessage({ customType: "c2c", content: body, display: true }, deliveryOptionsFor(idle));
+      pi.sendMessage({ customType: "c2c", content: body, display: true, details }, deliveryOptionsFor(idle));
     } catch {
       return false;
     }
@@ -412,9 +433,11 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       target: Type.String({ description: "Recipient alias (e.g. 'lyra-quill') or session id." }),
       body: Type.String({ description: "Message body." }),
     }),
+    renderShell: "self",
     async execute(_id, { target, body }) {
       const r = ready();
-      if (!r) return toolText(notReadyText);
+      const details: SendToolDetails = { kind: "dm", target };
+      if (!r) return toolText(notReadyText, details);
       // Try the cross-repo (sessions) broker first — it's the rendezvous
       // point for pi sessions in other repos, and most local peers are
       // also registered there. Fall back to the per-repo broker if the
@@ -426,21 +449,29 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       for (const t of targets) {
         try {
           await r.cli.send(target, body, { brokerRoot: t.root });
-          return toolText(`Sent to ${target} (via ${t.via}).`);
+          return toolText(`Sent to ${target} (via ${t.via}).`, details);
         } catch (e: unknown) {
           lastErr = e;
           const msg = e instanceof Error ? e.message : String(e);
           // If the error says "not registered", try the next broker.
           // Otherwise surface the error immediately.
           if (!/not[_ ]?registered|unknown[_ ]?alias|alias[_ ]?not[_ ]?found/i.test(msg)) {
-            return toolText(`c2c_send failed (${t.via}): ${msg}`);
+            return toolText(`c2c_send failed (${t.via}): ${msg}`, details);
           }
         }
       }
       return toolText(
         `c2c_send failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
+        details,
       );
     },
+    renderCall: (args, theme) => renderSendCall(args as unknown as SendToolDetails, theme),
+    renderResult: (result, _options, theme, context) =>
+      renderSendResult(
+        (result.details as SendToolDetails) ?? (context.args as unknown as SendToolDetails),
+        context.isError,
+        theme,
+      ),
   });
 
   pi.registerTool({
@@ -453,16 +484,25 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         Type.Array(Type.String(), { description: "Aliases to skip." }),
       ),
     }),
+    renderShell: "self",
     async execute(_id, { body, exclude }) {
       const r = ready();
-      if (!r) return toolText(notReadyText);
+      const details: SendToolDetails = { kind: "broadcast" };
+      if (!r) return toolText(notReadyText, details);
       try {
         await r.cli.sendAll(body, { exclude });
-        return toolText("Broadcast sent.");
+        return toolText("Broadcast sent.", details);
       } catch (e) {
-        return toolText(`c2c_send_all failed: ${e instanceof Error ? e.message : String(e)}`);
+        return toolText(`c2c_send_all failed: ${e instanceof Error ? e.message : String(e)}`, details);
       }
     },
+    renderCall: (_args, theme) => renderSendCall({ kind: "broadcast" }, theme),
+    renderResult: (result, _options, theme, context) =>
+      renderSendResult(
+        (result.details as SendToolDetails) ?? { kind: "broadcast" },
+        context.isError,
+        theme,
+      ),
   });
 
   pi.registerTool({
@@ -470,9 +510,10 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     label: "c2c peers",
     description: "List registered c2c peers and their liveness. Merges per-repo and cross-repo (sessions broker) peers when cross-repo is enabled.",
     parameters: Type.Object({}),
+    renderShell: "self",
     async execute() {
       const r = ready();
-      if (!r) return toolText(notReadyText);
+      if (!r) return toolText(notReadyText, { peers: [] } as ListToolDetails);
       try {
         // Per-repo broker list (always)
         const localPeers = await r.cli.list();
@@ -501,15 +542,20 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           if (a.alive !== b.alive) return a.alive ? -1 : 1;
           return a.alias.localeCompare(b.alias);
         });
-        if (merged.length === 0) return toolText("No peers registered.");
+        const details: ListToolDetails = {
+          peers: merged.map((p) => ({ alias: p.alias, alive: p.alive, tag: p.tag })),
+        };
+        if (merged.length === 0) return toolText("No peers registered.", details);
         const lines = merged.map(
           (p) => `${p.alive ? "●" : "○"} ${p.alias}${p.tag === "cross" ? "  [cross-repo]" : ""}`,
         );
-        return toolText(lines.join("\n"));
+        return toolText(lines.join("\n"), details);
       } catch (e) {
-        return toolText(`c2c_list failed: ${e instanceof Error ? e.message : String(e)}`);
+        return toolText(`c2c_list failed: ${e instanceof Error ? e.message : String(e)}`, { peers: [] } as ListToolDetails);
       }
     },
+    renderResult: (result, _options, theme, context) =>
+      renderListResult((result.details as ListToolDetails) ?? { peers: [] }, context.isError, theme),
   });
 
   pi.registerTool({
@@ -517,9 +563,10 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     label: "c2c inbox",
     description: "Drain and return any queued inbound c2c messages now.",
     parameters: Type.Object({}),
+    renderShell: "self",
     async execute() {
       const r = ready();
-      if (!r) return toolText(notReadyText);
+      if (!r) return toolText(notReadyText, { messages: [] } as InboxToolDetails);
       const sid = r.identity.sessionId;
       try {
         // Render the result BEFORE committing (markDelivered + clearSpool),
@@ -527,22 +574,27 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         // broker-drained spool and remain eligible for redelivery. Replay the
         // spool too so a manual poll surfaces anything a prior background tick
         // drained but failed to inject.
-        const text = await serializeDrain(async () => {
+        const { text, messages } = await serializeDrain(async () => {
           const combined = [...readSpool(SPOOL_DIR, sid), ...(await r.cli.pollInbox())];
           const fresh = filterNovel(combined, dedup);
           const rendered =
             fresh.length === 0
               ? "(no messages)"
               : fresh.map((m) => formatEnvelope(m, r.identity.alias)).join("\n\n");
+          const inboxMessages: InboxToolDetails = {
+            messages: fresh.map((m) => ({ from: m.from_alias || "unknown", preview: m.content.slice(0, 200) })),
+          };
           markDelivered(fresh, dedup);
           clearSpool(SPOOL_DIR, sid);
-          return rendered;
+          return { text: rendered, messages: inboxMessages.messages };
         });
-        return toolText(text);
+        return toolText(text, { messages } as InboxToolDetails);
       } catch (e) {
-        return toolText(`c2c_poll_inbox failed: ${e instanceof Error ? e.message : String(e)}`);
+        return toolText(`c2c_poll_inbox failed: ${e instanceof Error ? e.message : String(e)}`, { messages: [] } as InboxToolDetails);
       }
     },
+    renderResult: (result, _options, theme, context) =>
+      renderInboxResult((result.details as InboxToolDetails) ?? { messages: [] }, context.isError, theme),
   });
 
   pi.registerTool({
@@ -550,12 +602,21 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     label: "c2c whoami",
     description: "Show this session's c2c identity (alias + session id).",
     parameters: Type.Object({}),
+    renderShell: "self",
     async execute() {
-      if (!identity) return toolText(notReadyText);
+      if (!identity) return toolText(notReadyText, { alias: "", sessionId: "", registered: false } as WhoamiToolDetails);
+      const details: WhoamiToolDetails = {
+        alias: identity.alias,
+        sessionId: identity.sessionId,
+        registered,
+      };
       return toolText(
         `alias: ${identity.alias}\nsession_id: ${identity.sessionId}\nregistered: ${registered}`,
+        details,
       );
     },
+    renderResult: (result, _options, theme, context) =>
+      renderWhoamiResult((result.details as WhoamiToolDetails) ?? { alias: "", sessionId: "", registered: false }, context.isError, theme),
   });
 
   pi.registerTool({
@@ -563,16 +624,24 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     label: "c2c join room",
     description: "Join a c2c room (N:N channel). Room messages auto-deliver to your transcript.",
     parameters: Type.Object({ room: Type.String({ description: "Room id (e.g. 'swarm-lounge')." }) }),
+    renderShell: "self",
     async execute(_id, { room }) {
       const r = ready();
-      if (!r) return toolText(notReadyText);
+      const details: RoomToolDetails = { room, joined: true };
+      if (!r) return toolText(notReadyText, details);
       try {
         await r.cli.joinRoom(room, r.identity.alias);
-        return toolText(`Joined room ${room}.`);
+        return toolText(`Joined room ${room}.`, details);
       } catch (e) {
-        return toolText(`c2c_join_room failed: ${e instanceof Error ? e.message : String(e)}`);
+        return toolText(`c2c_join_room failed: ${e instanceof Error ? e.message : String(e)}`, details);
       }
     },
+    renderResult: (result, _options, theme, context) =>
+      renderJoinRoomResult(
+        (result.details as RoomToolDetails) ?? { room: (context.args as { room: string }).room },
+        context.isError,
+        theme,
+      ),
   });
 
   pi.registerTool({
@@ -583,16 +652,25 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       room: Type.String({ description: "Room id." }),
       body: Type.String({ description: "Message body." }),
     }),
+    renderShell: "self",
     async execute(_id, { room, body }) {
       const r = ready();
-      if (!r) return toolText(notReadyText);
+      const details: SendToolDetails = { kind: "room", room };
+      if (!r) return toolText(notReadyText, details);
       try {
         await r.cli.sendRoom(room, body);
-        return toolText(`Sent to room ${room}.`);
+        return toolText(`Sent to room ${room}.`, details);
       } catch (e) {
-        return toolText(`c2c_send_room failed: ${e instanceof Error ? e.message : String(e)}`);
+        return toolText(`c2c_send_room failed: ${e instanceof Error ? e.message : String(e)}`, details);
       }
     },
+    renderCall: (args, theme) => renderSendCall({ kind: "room", room: (args as { room: string }).room }, theme),
+    renderResult: (result, _options, theme, context) =>
+      renderSendResult(
+        (result.details as SendToolDetails) ?? { kind: "room", room: (context.args as { room: string }).room },
+        context.isError,
+        theme,
+      ),
   });
 
   pi.registerTool({
@@ -600,16 +678,20 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     label: "c2c rooms",
     description: "List the c2c rooms this session is a member of.",
     parameters: Type.Object({}),
+    renderShell: "self",
     async execute() {
       const r = ready();
-      if (!r) return toolText(notReadyText);
+      if (!r) return toolText(notReadyText, { rooms: [] } as RoomsToolDetails);
       try {
         const rooms = await r.cli.myRooms();
-        return toolText(rooms.length ? rooms.join("\n") : "(no rooms joined)");
+        const details: RoomsToolDetails = { rooms };
+        return toolText(rooms.length ? rooms.join("\n") : "(no rooms joined)", details);
       } catch (e) {
-        return toolText(`c2c_rooms failed: ${e instanceof Error ? e.message : String(e)}`);
+        return toolText(`c2c_rooms failed: ${e instanceof Error ? e.message : String(e)}`, { rooms: [] } as RoomsToolDetails);
       }
     },
+    renderResult: (result, _options, theme, context) =>
+      renderRoomsResult((result.details as RoomsToolDetails) ?? { rooms: [] }, context.isError, theme),
   });
 
   // --- slash commands (human) -----------------------------------------------
