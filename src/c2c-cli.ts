@@ -267,6 +267,8 @@ export interface RelayRegisterResult {
   registeredAt: number;
   ttl: number;
   alive: boolean;
+  /** Opaque host id returned by the relay when the alias includes the #<hostid> suffix. */
+  opaqueHostId?: string;
 }
 
 /** A direct message delivered via a c2c relay, from `c2c relay dm poll --json`. */
@@ -351,6 +353,7 @@ export function parseRelayRegister(stdout: string): RelayRegisterResult | null {
     registeredAt: typeof l.registered_at === "number" ? l.registered_at : 0,
     ttl: typeof l.ttl === "number" ? l.ttl : 0,
     alive: l.alive === true,
+    opaqueHostId: typeof l.opaque_host_id === "string" ? l.opaque_host_id : undefined,
   };
 }
 

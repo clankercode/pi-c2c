@@ -272,14 +272,23 @@ test("bin override is honored", async () => {
 
 // --- relay methods ---------------------------------------------------------
 
-test("relayRegister: builds register args, optional relay-url and token", async () => {
+test("relayRegister: builds register args, optional relay-url and token, parses opaque_host_id", async () => {
   const regJson = JSON.stringify({
     ok: true,
-    lease: { alias: "pi-c01ea5#a3b2c1d4e5f6", session_id: "sid-1", node_id: "n1", registered_at: 1781638000, ttl: 3600, alive: true },
+    lease: {
+      alias: "pi-c01ea5#a3b2c1d4e5f6",
+      session_id: "sid-1",
+      node_id: "n1",
+      registered_at: 1781638000,
+      ttl: 3600,
+      alive: true,
+      opaque_host_id: "a3b2c1d4e5f6",
+    },
   });
   const a = fakeExec({ stdout: regJson });
   const got = await new C2cCli({ exec: a.exec }).relayRegister("pi-c01ea5#a3b2c1d4e5f6");
   assert.equal(got?.alias, "pi-c01ea5#a3b2c1d4e5f6");
+  assert.equal(got?.opaqueHostId, "a3b2c1d4e5f6");
   assert.deepEqual(a.calls[0].args, ["relay", "register", "--alias", "pi-c01ea5#a3b2c1d4e5f6"]);
 
   const b = fakeExec({ stdout: regJson });
