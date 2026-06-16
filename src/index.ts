@@ -36,6 +36,7 @@ import { clearSpool, gcStaleSpools, readSpool, writeSpool } from "./spool.ts";
 import { formatStatus, installStatusColorPatch, type PiC2cBarState } from "./status.ts";
 import { collectDebugState } from "./debug.ts";
 import { computeHostHash, deriveRelayAlias } from "./relay.ts";
+import { buildSendHops, drainAllSources, executeSend, mergePeerLists } from "./routing.ts";
 import { PeerStatusStore, extractStatusMessages } from "./peer-status.ts";
 import { createStatusTracker, formatStatusEnvelope, type StatusTracker } from "./status-sync.ts";
 import { registerC2cMessageRenderer, type C2cDeliveryDetails } from "./ui/compact-message.ts";
@@ -568,39 +569,13 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const r = ready();
       const details: SendToolDetails = { kind: "dm", target };
       if (!r) return toolText(notReadyText, details);
-      // Try each transport in order until one accepts the target. Order
-      // matters: local brokers know more aliases than the relay (which
-      // sees only registered `<alias>#<host_hash>` identities), so we
-      // exhaust local first to avoid sending cross-machine when a local
-      // match would have worked.
-      type Hop = { kind: "sessions" | "per-repo" | "relay"; root?: string };
-      const hops: Hop[] = [];
-      if (sessionsBrokerRoot) hops.push({ kind: "sessions", root: sessionsBrokerRoot });
-      hops.push({ kind: "per-repo" });
-      if (relayRegistered && relayAddress) hops.push({ kind: "relay" });
-      let lastErr: unknown = null;
-      for (const hop of hops) {
-        try {
-          if (hop.kind === "relay") {
-            await r.cli.relayDmSend(target, body, relayAddress!);
-          } else {
-            await r.cli.send(target, body, { brokerRoot: hop.root });
-          }
-          return toolText(`Sent to ${target} (via ${hop.kind}).`, details);
-        } catch (e: unknown) {
-          lastErr = e;
-          const msg = e instanceof Error ? e.message : String(e);
-          // If the error says "not registered", try the next broker.
-          // Otherwise surface the error immediately.
-          if (!/not[_ ]?registered|unknown[_ ]?alias|alias[_ ]?not[_ ]?found/i.test(msg)) {
-            return toolText(`c2c_pi_send failed (${hop.kind}): ${msg}`, details);
-          }
-        }
+      // Try each transport in order until one accepts the target.
+      const hops = buildSendHops({ sessionsBrokerRoot, relayRegistered: relayRegistered && !!relayAddress });
+      const result = await executeSend(r.cli, hops, target, body, relayAddress);
+      if (result.ok) {
+        return toolText(`Sent to ${target} (via ${result.via}).`, details);
       }
-      return toolText(
-        `c2c_pi_send failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
-        details,
-      );
+      return toolText(`c2c_pi_send failed (${result.via}): ${result.message}`, details);
     },
     renderCall: (args, theme) => renderSendCall(args as unknown as SendToolDetails, theme),
     renderResult: (result, _options, theme, context) =>
@@ -665,38 +640,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         const relayPeers = relayRegistered
           ? await r.cli.relayList().catch(() => [])
           : [];
-        // Merge + dedup by session_id (prefer the live entry). Tag with
-        // [local] / [cross] / [relay] so the user can see which broker
-        // they came from. This is a key UX win for cross-machine visibility.
-        const bySid = new Map<string, { alias: string; alive: boolean; tag: "local" | "cross" | "relay" }>();
-        for (const p of localPeers) {
-          bySid.set(p.session_id, { alias: p.alias, alive: p.alive, tag: "local" });
-        }
-        for (const p of remotePeers) {
-          const existing = bySid.get(p.session_id);
-          if (!existing) {
-            bySid.set(p.session_id, { alias: p.alias, alive: p.alive, tag: "cross" });
-          } else if (!existing.alive && p.alive) {
-            // Prefer the live one and keep its tag.
-            bySid.set(p.session_id, { alias: p.alias, alive: p.alive, tag: existing.tag });
-          }
-        }
-        for (const p of relayPeers) {
-          // Relay has no `session_id` we can correlate with; dedup by
-          // the derived `<alias>#<host_hash>` alias itself.
-          const key = `relay:${p.alias}`;
-          const existing = bySid.get(key);
-          if (!existing) {
-            bySid.set(key, { alias: p.alias, alive: p.alive, tag: "relay" });
-          } else if (!existing.alive && p.alive) {
-            bySid.set(key, { alias: p.alias, alive: p.alive, tag: existing.tag });
-          }
-        }
-        // Sort: live first, then by alias
-        const merged = Array.from(bySid.values()).sort((a, b) => {
-          if (a.alive !== b.alive) return a.alive ? -1 : 1;
-          return a.alias.localeCompare(b.alias);
-        });
+        const merged = mergePeerLists(localPeers, remotePeers, relayPeers);
         // Enrich each peer with the last-known status from the peerStatusStore.
         // Statuses are TTL'd; a missing/expired entry yields no annotation.
         const details: ListToolDetails = {
@@ -746,27 +690,12 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         // poller — otherwise a manual call before the next tick could miss
         // cross-machine or cross-repo DMs.
         const { text, messages } = await serializeDrain(async () => {
-          const drained: C2cMessage[] = [];
-          try {
-            drained.push(...(await r.cli.pollInbox()));
-          } catch {
-            // local broker hiccup — ignore
-          }
-          if (sessionsBrokerRoot) {
-            try {
-              drained.push(...(await r.cli.pollInbox({ brokerRoot: sessionsBrokerRoot })));
-            } catch {
-              // sessions broker hiccup — ignore
-            }
-          }
-          if (relayRegistered && relayAddress) {
-            try {
-              const relayMsgs = await r.cli.relayDmPoll(relayAddress);
-              for (const c of relayToC2c(relayMsgs)) drained.push(c);
-            } catch {
-              // relay hiccup — ignore
-            }
-          }
+          const drained = await drainAllSources(r.cli, {
+            sessionsBrokerRoot,
+            relayRegistered: relayRegistered && !!relayAddress,
+            relayAddress,
+            relayToC2c,
+          });
           const combined = [...readSpool(SPOOL_DIR, sid), ...drained];
           const fresh = filterNovel(combined, dedup);
           const rendered =
@@ -1114,44 +1043,13 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       try {
         // Per-repo broker list (always)
         const localPeers = await r.cli.list();
-        // Cross-repo / sessions broker list (when enabled)
         const remotePeers = sessionsBrokerRoot
           ? await r.cli.list({ brokerRoot: sessionsBrokerRoot }).catch(() => [])
           : [];
-        // Public relay list (when registered). Relay peers use the
-        // `<alias>#<host_hash>` format — we keep the full alias as the
-        // dedup key since relay has no session_id we can correlate with.
         const relayPeers = relayRegistered
           ? await r.cli.relayList().catch(() => [])
           : [];
-        // Merge + dedup by session_id, prefer the live entry. Local and
-        // cross-repo share the session_id keyspace; relay uses a prefixed
-        // key to avoid collision (relay identities have no session_id).
-        const bySid = new Map<string, { alias: string; alive: boolean; tag: "local" | "cross" | "relay" }>();
-        for (const p of localPeers) {
-          bySid.set(p.session_id, { alias: p.alias, alive: p.alive, tag: "local" });
-        }
-        for (const p of remotePeers) {
-          const existing = bySid.get(p.session_id);
-          if (!existing) {
-            bySid.set(p.session_id, { alias: p.alias, alive: p.alive, tag: "cross" });
-          } else if (!existing.alive && p.alive) {
-            bySid.set(p.session_id, { alias: p.alias, alive: p.alive, tag: existing.tag });
-          }
-        }
-        for (const p of relayPeers) {
-          const key = `relay:${p.alias}`;
-          const existing = bySid.get(key);
-          if (!existing) {
-            bySid.set(key, { alias: p.alias, alive: p.alive, tag: "relay" });
-          } else if (!existing.alive && p.alive) {
-            bySid.set(key, { alias: p.alias, alive: p.alive, tag: existing.tag });
-          }
-        }
-        const merged = Array.from(bySid.values()).sort((a, b) => {
-          if (a.alive !== b.alive) return a.alive ? -1 : 1;
-          return a.alias.localeCompare(b.alias);
-        });
+        const merged = mergePeerLists(localPeers, remotePeers, relayPeers);
         if (merged.length === 0) return ctx.ui.notify("No peers registered.", "info");
         const lines = merged.map((p) => {
           const status = peerStatusStore.get(p.alias);
@@ -1207,38 +1105,12 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       }
       const target = m[1];
       const body = m[2];
-      // Try each transport in order until one accepts the target. Same
-      // routing as the LLM-facing c2c_pi_send tool — exhaust local first
-      // (which know more aliases) before falling through to relay.
-      const hops: Array<{ kind: "sessions" | "per-repo" | "relay"; root?: string }> = [];
-      if (sessionsBrokerRoot) hops.push({ kind: "sessions", root: sessionsBrokerRoot });
-      hops.push({ kind: "per-repo" });
-      if (relayRegistered && relayAddress) hops.push({ kind: "relay" });
-      let lastErr: unknown = null;
-      for (const hop of hops) {
-        try {
-          if (hop.kind === "relay") {
-            await r.cli.relayDmSend(target, body, relayAddress!);
-          } else {
-            await r.cli.send(target, body, { brokerRoot: hop.root });
-          }
-          return ctx.ui.notify(`Sent to ${target} (via ${hop.kind}).`, "info");
-        } catch (e: unknown) {
-          lastErr = e;
-          const msg = e instanceof Error ? e.message : String(e);
-          // If the error says "not registered", try the next broker.
-          if (!/not[_ ]?registered|unknown[_ ]?alias|alias[_ ]?not[_ ]?found/i.test(msg)) {
-            return ctx.ui.notify(
-              `c2c send failed (${hop.kind}): ${msg}`,
-              "error",
-            );
-          }
-        }
+      const hops = buildSendHops({ sessionsBrokerRoot, relayRegistered: relayRegistered && !!relayAddress });
+      const result = await executeSend(r.cli, hops, target, body, relayAddress);
+      if (result.ok) {
+        return ctx.ui.notify(`Sent to ${target} (via ${result.via}).`, "info");
       }
-      ctx.ui.notify(
-        `c2c send failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
-        "error",
-      );
+      ctx.ui.notify(`c2c send failed (${result.via}): ${result.message}`, "error");
     },
   });
 
