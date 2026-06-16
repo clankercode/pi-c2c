@@ -22,6 +22,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { copyToClipboard } from "@earendil-works/pi-coding-agent";
 import { C2cCli, type C2cMessage, type ExecFn, resolveSessionsBrokerRoot } from "./c2c-cli.ts";
 import { establishIdentity, type Identity } from "./identity.ts";
 import {
@@ -34,6 +35,7 @@ import {
 import { clearSpool, gcStaleSpools, readSpool, writeSpool } from "./spool.ts";
 import { formatStatus, installStatusColorPatch, type PiC2cBarState } from "./status.ts";
 import { collectDebugState } from "./debug.ts";
+import { computeHostHash, deriveRelayAlias } from "./relay.ts";
 import { PeerStatusStore, extractStatusMessages } from "./peer-status.ts";
 import { createStatusTracker, formatStatusEnvelope, type StatusTracker } from "./status-sync.ts";
 import { registerC2cMessageRenderer, type C2cDeliveryDetails } from "./ui/compact-message.ts";
@@ -179,6 +181,13 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   // `c2c_pi_list` / `c2c_pi_send` tools can show what's wired up.
   let crossRepoSessionsRegistered = false;
   let crossRepoSessionsError: string | undefined;
+
+  // Relay state: tracks registration with the public c2c relay
+  // (default https://relay.c2c.im) so agents on different machines can DM.
+  const relayEnabled = (process.env.C2C_PI_RELAY ?? "1") !== "0";
+  let relayRegistered = false;
+  let relayAddress: string | undefined;
+  let relayError: string | undefined;
 
   // Serialize drains so the background poller and a manual `c2c_pi_poll_inbox`
   // tool never drain concurrently (which could split a batch).
@@ -426,6 +435,22 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       }
     }
 
+    // Register with the public relay so cross-machine agents can DM us.
+    // Best-effort: failure is non-fatal (relay is an add-on to the local broker).
+    if (relayEnabled && identity) {
+      try {
+        const hostHash = computeHostHash();
+        const relayAlias = deriveRelayAlias(identity.alias, hostHash);
+        await cli!.relayRegister(relayAlias);
+        relayRegistered = true;
+        relayAddress = relayAlias;
+        relayError = undefined;
+      } catch (e: unknown) {
+        relayRegistered = false;
+        relayError = e instanceof Error ? e.message : String(e);
+      }
+    }
+
     // Start the auto-delivery poller and do an immediate first drain.
     if (!pollTimer) {
       pollTimer = setInterval(() => {
@@ -452,6 +477,9 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     barState.registered = false;
     crossRepoSessionsRegistered = false;
     crossRepoSessionsError = undefined;
+    relayRegistered = false;
+    relayAddress = undefined;
+    relayError = undefined;
     peerStatusStore.clear();
   });
 
@@ -782,6 +810,37 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
+    name: "c2c_pi_copy_address",
+    label: "c2c copy address",
+    description: "Copy this node's public relay address to the clipboard. If the session is not connected to the public relay, returns the candidate address and suggests using /c2c-copy-address to connect interactively.",
+    parameters: Type.Object({}),
+    renderShell: "self",
+    async execute() {
+      const r = ready();
+      if (!r) return toolText(notReadyText);
+
+      let addr = relayRegistered ? relayAddress : undefined;
+      if (!addr) {
+        // Not relay-registered — compute the address but don't auto-register.
+        // The tool result tells the agent the status so it can inform the user.
+        const hostHash = computeHostHash();
+        const candidate = deriveRelayAlias(r.identity.alias, hostHash);
+        return toolText(
+          `Not connected to public relay. Candidate address: ${candidate}\n` +
+            `Use /c2c-copy-address to interactively connect and copy.`,
+        );
+      }
+
+      try {
+        await copyToClipboard(addr);
+        return toolText(`Copied relay address to clipboard: ${addr}`);
+      } catch {
+        return toolText(`Relay address: ${addr}  (clipboard copy failed)`);
+      }
+    },
+  });
+
+  pi.registerTool({
     name: "c2c_pi_rooms",
     label: "c2c rooms",
     description: "List the c2c rooms this session is a member of.",
@@ -801,6 +860,53 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     renderResult: (result, _options, theme, context) =>
       renderRoomsResult((result.details as RoomsToolDetails) ?? { rooms: [] }, context.isError, theme),
   });
+
+  /**
+   * Attempt to register with the public relay interactively. Called by
+   * `/c2c-copy-address` when the session is not yet relay-registered.
+   * Returns the relay alias on success, or undefined on failure/cancel.
+   */
+  async function ensureRelayRegistered(
+    ui: ExtensionContext["ui"],
+  ): Promise<string | undefined> {
+    if (!relayEnabled) {
+      const choice = await ui.select("Public relay disabled", [
+        "Enable relay (C2C_PI_RELAY=1)",
+        "Cancel",
+      ]);
+      if (choice?.startsWith("Enable")) {
+        ui.notify(
+          'Set C2C_PI_RELAY=1 in your environment and restart the session.',
+          "info",
+        );
+      }
+      return undefined;
+    }
+    if (!identity || !cli) {
+      ui.notify("c2c: not registered yet.", "warning");
+      return undefined;
+    }
+
+    const choice = await ui.select("Not connected to public relay", [
+      "Connect now",
+      "Cancel",
+    ]);
+    if (!choice || choice === "Cancel") return undefined;
+
+    try {
+      const hostHash = computeHostHash();
+      const relayAlias = deriveRelayAlias(identity.alias, hostHash);
+      await cli.relayRegister(relayAlias);
+      relayRegistered = true;
+      relayAddress = relayAlias;
+      relayError = undefined;
+      return relayAlias;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      ui.notify(`Relay registration failed: ${msg}`, "error");
+      return undefined;
+    }
+  }
 
   // --- slash commands (human) -----------------------------------------------
 
@@ -960,6 +1066,23 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         ctx.ui.notify(`Sent to ${target}.`, "info");
       } catch (e) {
         ctx.ui.notify(`c2c send failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("c2c-copy-address", {
+    description: "Copy this node's public relay address to clipboard",
+    handler: async (_args, ctx) => {
+      let addr = relayRegistered ? relayAddress : undefined;
+      if (!addr) {
+        addr = await ensureRelayRegistered(ctx.ui);
+        if (!addr) return;
+      }
+      try {
+        await copyToClipboard(addr);
+        ctx.ui.notify(`Copied relay address to clipboard: ${addr}`, "info");
+      } catch {
+        ctx.ui.notify(`Relay address: ${addr}  (copy failed — copy manually)`, "warning");
       }
     },
   });
