@@ -1,4 +1,3 @@
-import * as os from "node:os";
 import * as fs from "node:fs";
 
 export type DebugStatus = "ok" | "warning" | "error";
@@ -87,11 +86,16 @@ export function collectDebugProblems(state: DebugStateInput): DebugProblem[] {
   }
 
   if (!state.env.C2C_MCP_BROKER_ROOT) {
+    // The c2c CLI computes the broker root from the git remote URL
+    // fingerprint and falls back to ~/.c2c/repos/default/broker. The env
+    // var is only an explicit override. We surface a *note* (not a warning)
+    // so the user knows the override is unset; the resolved path is
+    // available via `c2c doctor` (the extension doesn't know it).
     problems.push({
-      severity: "warning",
+      severity: "info",
       field: "brokerRootEnv",
-      message: "C2C_MCP_BROKER_ROOT is not set; using the fingerprint-derived default",
-      remedy: "if multi-repo, set C2C_MCP_BROKER_ROOT in your shell or .c2c/repo.json",
+      message: "C2C_MCP_BROKER_ROOT is not set; c2c CLI auto-detects from git remote fingerprint",
+      remedy: "run `c2c doctor` to see the resolved broker root; set the env var only to override",
     });
   }
 
@@ -127,9 +131,6 @@ export function collectDebugState(state: DebugStateInput): string {
   const alias = state.identity?.alias ?? "(none)";
   const sessionId = state.identity?.sessionId ?? "(none)";
 
-  const brokerRootEnv = state.env.C2C_MCP_BROKER_ROOT;
-  const brokerRoot = brokerRootEnv ?? (state.env.XDG_STATE_HOME ?? os.homedir() + "/.c2c");
-
   const cwd = state.ctxRef?.cwd ?? state.cwdFallback;
   const piSessionId = state.ctxRef?.sessionManager?.getSessionId?.() ?? null;
 
@@ -151,8 +152,6 @@ export function collectDebugState(state: DebugStateInput): string {
     `registered: ${state.registered}`,
     `registerError: ${state.registerError ?? "(none)"}`,
     `status: ${status}`,
-    `brokerRoot: ${brokerRoot}`,
-    `brokerRootEnv: ${brokerRootEnv ?? "(not set)"}`,
     `cwd: ${cwd}`,
     `piSessionId: ${piSessionId}`,
     `pid: ${state.pid}`,
@@ -164,6 +163,7 @@ export function collectDebugState(state: DebugStateInput): string {
     `spoolDir: ${state.spoolDir}`,
     `spoolFiles: ${spoolFiles}`,
     `barState: ${JSON.stringify({ alias: state.barState.alias, registered: state.barState.registered, reason: state.barState.reason })}`,
+    `brokerRoot: see \`c2c doctor\` (auto-detected from git remote fingerprint)`,
   ];
 
   const lines: string[] = [];

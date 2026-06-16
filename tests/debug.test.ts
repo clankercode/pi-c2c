@@ -35,8 +35,7 @@ test("collectDebugState formats all fields when registered and healthy", () => {
   assert.ok(out.includes("alias: test-alias"));
   assert.ok(out.includes("sessionId: session-123"));
   assert.ok(out.includes("registered: true"));
-  assert.ok(out.includes("brokerRoot: /mock/broker"));
-  assert.ok(out.includes("brokerRootEnv: /mock/broker"));
+  assert.ok(out.includes("brokerRoot: see `c2c doctor`"));
   assert.ok(out.includes("cwd: /mock/cwd"));
   assert.ok(out.includes("piSessionId: pi-123"));
   assert.ok(out.includes("pid: 9999"));
@@ -68,7 +67,6 @@ test("collectDebugState handles null state correctly", () => {
   assert.ok(out.includes("alias: (none)"));
   assert.ok(out.includes("sessionId: (none)"));
   assert.ok(out.includes("registered: false"));
-  assert.ok(out.includes("brokerRootEnv: (not set)"));
   assert.ok(out.includes("cwd: /fallback"));
   assert.ok(out.includes("piSessionId: null"));
   assert.ok(out.includes("hostSessionEnv: (none)"));
@@ -107,10 +105,14 @@ test("collectDebugState reports alias mismatch as warning", () => {
   assert.ok(out.includes('[warning] barState: barState.alias ("stale-alias") differs from identity.alias ("test-alias")'));
 });
 
-test("collectDebugState reports missing C2C_MCP_BROKER_ROOT as warning", () => {
+test("collectDebugState reports missing C2C_MCP_BROKER_ROOT as info (not a warning)", () => {
   const out = collectDebugState({ ...BASE_STATE, env: {} });
-  assert.ok(out.includes("status: warning"));
-  assert.ok(out.includes("[warning] brokerRootEnv: C2C_MCP_BROKER_ROOT is not set"));
+  // Missing broker-root env var is informational only — the c2c CLI
+  // auto-detects. Status should still be 'ok' (no warnings), and the
+  // problem is tagged [info].
+  assert.ok(out.includes("status: ok"));
+  assert.ok(out.includes("[info] brokerRootEnv: C2C_MCP_BROKER_ROOT is not set"));
+  assert.ok(out.includes("remedy: run `c2c doctor`"));
 });
 
 test("rollupStatus: error beats warning beats ok", () => {

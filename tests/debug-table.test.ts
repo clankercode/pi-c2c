@@ -17,12 +17,11 @@ alias: pi-cbacea
 sessionId: pi-019ed079-5596-7044-8018-7f44e6b75625
 registered: true
 status: warning
-brokerRoot: /home/xertrov/.c2c
 cwd: /home/xertrov/src/c2c
 
 === problems ===
-[warning] brokerRootEnv: C2C_MCP_BROKER_ROOT is not set; using the fingerprint-derived default
-    remedy: if multi-repo, set C2C_MCP_BROKER_ROOT in your shell or .c2c/repo.json
+[info] brokerRootEnv: C2C_MCP_BROKER_ROOT is not set; c2c CLI auto-detects from git remote fingerprint
+    remedy: run 'c2c doctor' to see the resolved broker root; set the env var only to override
 `;
 
 test("formatDebugTable: omits the === c2c pi debug === header", () => {
@@ -66,8 +65,8 @@ test("formatDebugTable: problems section appears after fields", () => {
 test("formatDebugTable: problems section includes severity, field, message, and remedy", () => {
   const out = formatDebugTable(SAMPLE);
   const problemsBlock = out.slice(out.indexOf("--- problems ---"));
-  assert.ok(problemsBlock.includes("[warning] brokerRootEnv"), "should include the problem line");
-  assert.ok(problemsBlock.includes("remedy: if multi-repo"), "should include the remedy");
+  assert.ok(problemsBlock.includes("[info] brokerRootEnv"), "should include the problem line");
+  assert.ok(problemsBlock.includes("remedy: run 'c2c doctor'"), "should include the remedy");
 });
 
 test("formatDebugTable: omits problems section when none present", () => {
@@ -117,6 +116,6 @@ test("formatDebugTable: integration with collectDebugState output", () => {
   assert.match(out, /^registerError\s+broker unreachable$/m, "registerError should be 'broker unreachable'");
   // problems section exists
   assert.ok(out.includes("--- problems ---"));
-  // the brokerRootEnv problem is listed
-  assert.ok(out.includes("[warning] brokerRootEnv"));
+  // the brokerRootEnv problem is listed (as info, not warning)
+  assert.ok(out.includes("[info] brokerRootEnv"));
 });
