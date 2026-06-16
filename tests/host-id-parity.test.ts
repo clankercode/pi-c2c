@@ -7,9 +7,15 @@
  * `pi-c2c/src/relay.ts:computeHostHash()`. This test shells out to
  * `c2c host-id` and asserts byte-for-byte equality.
  *
- * Self-skips when `c2c` is not on PATH (mirrors the pattern in
- * `tests/integration.test.ts`). The unit-level recipe parity is
- * proven by the c2c-side tests in
+ * Resolution order for the c2c binary:
+ *   1. $C2C_BIN env var (explicit override)
+ *   2. `c2c` on $PATH (typical install)
+ *   3. The repo's _build dir: `../c2c/_build/default/ocaml/cli/c2c.exe`
+ *      (dev workflow — when the user is iterating on the c2c source but
+ *      hasn't reinstalled globally)
+ *
+ * Self-skips when none of the above is available. The unit-level
+ * recipe parity is proven by the c2c-side tests in
  * `ocaml/test/test_relay_opaque_host_id.ml`; this is the cross-
  * implementation test that catches drift in either direction.
  */
@@ -17,25 +23,43 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { computeHostHash } from "../src/relay.ts";
 
-const C2C_BIN = process.env.C2C_BIN ?? "c2c";
+const C2C_BIN_ENV = process.env.C2C_BIN;
+const C2C_BIN_REPO = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "c2c",
+  "_build",
+  "default",
+  "ocaml",
+  "cli",
+  "c2c.exe",
+);
+const C2C_BIN_FALLBACK = "c2c";
 
-function c2cHostIdAvailable(): boolean {
+function resolveC2cBin(): string | null {
+  if (C2C_BIN_ENV && existsSync(C2C_BIN_ENV)) return C2C_BIN_ENV;
+  if (existsSync(C2C_BIN_REPO)) return C2C_BIN_REPO;
+  // Try $PATH last.
   try {
-    execFileSync(C2C_BIN, ["host-id"], { stdio: "ignore" });
-    return true;
+    execFileSync(C2C_BIN_FALLBACK, ["host-id"], { stdio: "ignore" });
+    return C2C_BIN_FALLBACK;
   } catch {
-    return false;
+    return null;
   }
 }
 
-const HAVE_C2C = c2cHostIdAvailable();
-const opts = HAVE_C2C ? {} : { skip: "c2c binary not on PATH" };
+const C2C_BIN = resolveC2cBin();
+const opts = C2C_BIN ? {} : { skip: "c2c binary not found (set C2C_BIN or install c2c)" };
 
 test("c2c host-id matches pi-c2c computeHostHash() byte-for-byte", opts, () => {
   // c2c host-id outputs just the 12-hex hash on stdout (plain mode).
-  const c2cOutput = execFileSync(C2C_BIN, ["host-id"], {
+  const c2cOutput = execFileSync(C2C_BIN!, ["host-id"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   }).trim();
@@ -51,7 +75,7 @@ test("c2c host-id matches pi-c2c computeHostHash() byte-for-byte", opts, () => {
 });
 
 test("c2c host-id --json matches pi-c2c computeHostHash() and reports source", opts, () => {
-  const stdout = execFileSync(C2C_BIN, ["host-id", "--json"], {
+  const stdout = execFileSync(C2C_BIN!, ["host-id", "--json"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
