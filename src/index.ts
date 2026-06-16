@@ -439,9 +439,15 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     // Best-effort: failure is non-fatal (relay is an add-on to the local broker).
     if (relayEnabled && identity) {
       try {
+        const relayUrl = (process.env.C2C_PI_RELAY_URL ?? "").trim() || "https://relay.c2c.im";
+        // Ensure relay setup has been run so the CLI knows the relay URL.
+        const existing = await cli!.relaySetupShow().catch(() => null);
+        if (!existing || !existing.url) {
+          await cli!.relaySetup({ url: relayUrl });
+        }
         const hostHash = computeHostHash();
         const relayAlias = deriveRelayAlias(identity.alias, hostHash);
-        await cli!.relayRegister(relayAlias);
+        await cli!.relayRegister(relayAlias, { relayUrl });
         relayRegistered = true;
         relayAddress = relayAlias;
         relayError = undefined;
@@ -922,9 +928,14 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     if (!choice || choice === "Cancel") return undefined;
 
     try {
+      const relayUrl = (process.env.C2C_PI_RELAY_URL ?? "").trim() || "https://relay.c2c.im";
+      const existing = await cli.relaySetupShow().catch(() => null);
+      if (!existing || !existing.url) {
+        await cli.relaySetup({ url: relayUrl });
+      }
       const hostHash = computeHostHash();
       const relayAlias = deriveRelayAlias(identity.alias, hostHash);
-      await cli.relayRegister(relayAlias);
+      await cli.relayRegister(relayAlias, { relayUrl });
       relayRegistered = true;
       relayAddress = relayAlias;
       relayError = undefined;

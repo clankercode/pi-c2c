@@ -527,6 +527,25 @@ export class C2cCli {
     return parseRelayFingerprint(res.stdout);
   }
 
+  /** Configure the relay connection (persists URL/token for future commands). */
+  async relaySetup(opts?: { url?: string; token?: string; signal?: AbortSignal }): Promise<void> {
+    const args = ["relay", "setup"];
+    if (opts?.url) args.push("--url", opts.url);
+    if (opts?.token) args.push("--token", opts.token);
+    await this.run(args, { signal: opts?.signal });
+  }
+
+  /** Show current relay configuration. Returns the parsed JSON or null. */
+  async relaySetupShow(opts?: { signal?: AbortSignal }): Promise<Record<string, unknown> | null> {
+    const res = await this.run(["relay", "setup", "--show", "--json"], { signal: opts?.signal });
+    try {
+      const parsed = JSON.parse(res.stdout);
+      return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Register a derived alias on the configured relay. */
   async relayRegister(
     alias: string,
