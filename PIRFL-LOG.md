@@ -57,3 +57,14 @@ A native pi extension making a pi session a first-class c2c peer
   - Delivery reliability: new `spool.ts` (drained msgs persisted before inject, cleared after success, replayed on tick/start); split `selectNovel`→`filterNovel`(no mutate)+`markDelivered`(after success); `shuttingDown` flag stops in-flight drain during teardown.
   - `sanitizeContent` neutralizes `<c2c`/`</c2c` in peer content → no envelope breakout / forged-frame prompt injection.
 - Gate: 54 tests, tsc clean.
+
+### S5 — Live dogfood (isolated broker root, real pi v0.79.4)
+Validated end-to-end in the wild (C2C_MCP_BROKER_ROOT=/tmp isolated; shared swarm broker never touched):
+- **Registration**: `pi -ne -e src/index.ts` → "c2c: registered as pi-dogfood"; broker `list` shows it alive; status line shows alias.
+- **Tools**: agent called `c2c_whoami` → correct alias/session_id/registered=true.
+- **Auto-delivery (inbound)**: CLI peer → pi; the `<c2c …>` envelope was injected into pi's transcript via pi.sendMessage and the idle agent woke (triggerTurn). Notify summary shown.
+- **Outbound send**: `c2c_send` + `/c2c-send` reach the broker with correct caller identity (env). Two broker-policy rejections seen (recipient-not-alive, no-self-send) — NOT the caller-owns-alias BLOCKER, confirming the fix.
+- **Cross-peer round-trip**: launched a 2nd live pi (pi-dogfood2); pi-dogfood `/c2c-send pi-dogfood2 …` → delivered as `<c2c from="pi-dogfood" to="pi-dogfood2">` into peer2's transcript, woke peer2's agent. **Real pi↔pi messaging works.**
+- CLI-contract checks (against real binary): send-via-env, `--` separator (leading-dash body verbatim), whoami-via-env, rooms join `--`/my-rooms-via-env, `list` fields `[alias,alive,pid,registered_at,session_id]` — all pass.
+
+Result: pi is a working first-class c2c peer. Auto-delivery into the transcript — the native win Claude Code's MCP path can't do — works.
