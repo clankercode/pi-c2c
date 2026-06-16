@@ -27,6 +27,8 @@ export interface DebugStateInput {
   sessionsBrokerRoot?: string;
   crossRepoSessionsRegistered?: boolean;
   crossRepoSessionsError?: string;
+  peerStatusCount?: number;
+  peerStatusSample?: Array<{ alias: string; state: string; since: number; ttlMs: number }>;
   prevSessionId: string | undefined;
   autoJoinRooms: string[];
   piBarPatched: boolean;
@@ -172,6 +174,8 @@ export function collectDebugState(state: DebugStateInput): string {
     `sessionsBrokerRoot: ${state.sessionsBrokerRoot ?? "(disabled)"}`,
     `crossRepoSessionsRegistered: ${state.crossRepoSessionsRegistered ?? false}`,
     `crossRepoSessionsError: ${state.crossRepoSessionsError ?? "(none)"}`,
+    `peerStatusCount: ${state.peerStatusCount ?? 0}`,
+    `peerStatusSample: ${JSON.stringify(state.peerStatusSample ?? [])}`,
     `cwd: ${cwd}`,
     `piSessionId: ${piSessionId}`,
     `pid: ${state.pid}`,

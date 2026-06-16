@@ -181,3 +181,24 @@ test("collectDebugState: cross-repo disabled leaves default fields", () => {
   assert.ok(out.includes("crossRepoEnabled: false"));
   assert.ok(out.includes("sessionsBrokerRoot: (disabled)"));
 });
+
+test("collectDebugState: surfaces peer status count and sample", () => {
+  const out = collectDebugState({
+    ...BASE_STATE,
+    peerStatusCount: 3,
+    peerStatusSample: [
+      { alias: "alice", state: "processing", since: 1, ttlMs: 60_000 },
+      { alias: "bob", state: "idle", since: 2, ttlMs: 60_000 },
+    ],
+  });
+  assert.ok(out.includes("peerStatusCount: 3"));
+  assert.ok(out.includes("peerStatusSample:"));
+  assert.ok(out.includes("alice"));
+  assert.ok(out.includes("processing"));
+});
+
+test("collectDebugState: peer status defaults to zero/empty when absent", () => {
+  const out = collectDebugState(BASE_STATE);
+  assert.ok(out.includes("peerStatusCount: 0"));
+  assert.ok(out.includes("peerStatusSample: []"));
+});

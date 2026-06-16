@@ -25,6 +25,8 @@ export interface ListPeerInfo {
   alias: string;
   alive: boolean;
   tag?: "local" | "cross";
+  /** Last known runtime state from the peer status store, if recorded. */
+  state?: "idle" | "processing" | "tool" | "input";
 }
 
 export interface ListToolDetails {
@@ -144,11 +146,30 @@ export function renderListResult(details: ListToolDetails, isError: boolean, the
 
   for (const peer of peers) {
     const tag = peer.tag === "cross" ? theme.fg("borderMuted", "  [cross-repo]") : "";
-    const line = `${peerIndicator(peer.alive, theme)} ${theme.fg("text", peer.alias)}${tag}`;
+    const stateSuffix = peer.state
+      ? "  " + theme.fg(statusColor(peer.state), `[${peer.state}]`)
+      : "";
+    const line = `${peerIndicator(peer.alive, theme)} ${theme.fg("text", peer.alias)}${tag}${stateSuffix}`;
     container.addChild(new Text(INDENT_CHILD + line, 0, 0));
   }
 
   return container;
+}
+
+/** Pick a theme color for a peer's last-known status. */
+function statusColor(state: string): import("@earendil-works/pi-coding-agent").ThemeColor {
+  switch (state) {
+    case "idle":
+      return "muted";
+    case "processing":
+      return "accent";
+    case "tool":
+      return "warning";
+    case "input":
+      return "success";
+    default:
+      return "borderMuted";
+  }
 }
 
 // ── c2c_poll_inbox ───────────────────────────────────────────────────────────

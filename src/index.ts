@@ -34,6 +34,7 @@ import {
 import { clearSpool, gcStaleSpools, readSpool, writeSpool } from "./spool.ts";
 import { formatStatus, installStatusColorPatch, type PiC2cBarState } from "./status.ts";
 import { collectDebugState } from "./debug.ts";
+import { PeerStatusStore, extractStatusMessages } from "./peer-status.ts";
 import { createStatusTracker, formatStatusEnvelope, type StatusTracker } from "./status-sync.ts";
 import { registerC2cMessageRenderer, type C2cDeliveryDetails } from "./ui/compact-message.ts";
 import {
@@ -160,6 +161,12 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   const dedup = new DeliveryDedup();
   const pollIntervalMs = readPollInterval();
   let statusTracker: StatusTracker | null = null;
+  // Peer status store: silently tracks the most recent runtime state of each
+  // peer (idle/processing/tool/input) without surfacing the raw status
+  // envelope to the LLM or the human chat. Inbound status messages are
+  // filtered out in `pollTick` before delivery; the recorded state is
+  // surfaced via `c2c_list` and `/c2c-pi-debug`.
+  const peerStatusStore = new PeerStatusStore();
 
   // Cross-repo rendezvous: also register / list / send via the sessions
   // broker (`~/.c2c/sessions/broker` by default) so pi sessions in different
@@ -243,7 +250,13 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           // sessions broker hiccup — ignore, retry next tick
         }
       }
-      const combined = [...readSpool(SPOOL_DIR, sid), ...drained];
+      // Silently track peer status envelopes: any message that parses as a
+      // status envelope is recorded in `peerStatusStore` and dropped from
+      // delivery. The LLM never sees them; the human chat never sees them
+      // as a "new message" notification. They live on as a per-peer state
+      // that `c2c_list` and `/c2c-pi-debug` can surface.
+      const { messages: deliverable } = extractStatusMessages(drained, peerStatusStore);
+      const combined = [...readSpool(SPOOL_DIR, sid), ...deliverable];
       const novel = filterNovel(combined, dedup);
       if (novel.length === 0) {
         if (combined.length > 0) clearSpool(SPOOL_DIR, sid); // already delivered
@@ -439,6 +452,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     barState.registered = false;
     crossRepoSessionsRegistered = false;
     crossRepoSessionsError = undefined;
+    peerStatusStore.clear();
   });
 
   // --- helpers for tools/commands -------------------------------------------
@@ -477,6 +491,16 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         sessionsBrokerRoot,
         crossRepoSessionsRegistered,
         crossRepoSessionsError,
+        peerStatusCount: peerStatusStore.size(),
+        peerStatusSample: peerStatusStore
+          .live()
+          .slice(0, 5)
+          .map(({ alias, entry }) => ({
+            alias,
+            state: entry.state,
+            since: entry.since,
+            ttlMs: entry.ttlMs,
+          })),
       });
       return toolText(text);
     },
@@ -565,7 +589,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_list",
     label: "c2c peers",
-    description: "List registered c2c peers and their liveness. Merges per-repo and cross-repo (sessions broker) peers when cross-repo is enabled.",
+    description: "List registered c2c peers and their liveness. Merges per-repo and cross-repo (sessions broker) peers when cross-repo is enabled. Each peer is annotated with their last known status (idle/processing/tool/input) when available.",
     parameters: Type.Object({}),
     renderShell: "self",
     async execute() {
@@ -599,13 +623,26 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           if (a.alive !== b.alive) return a.alive ? -1 : 1;
           return a.alias.localeCompare(b.alias);
         });
+        // Enrich each peer with the last-known status from the peerStatusStore.
+        // Statuses are TTL'd; a missing/expired entry yields no annotation.
         const details: ListToolDetails = {
-          peers: merged.map((p) => ({ alias: p.alias, alive: p.alive, tag: p.tag })),
+          peers: merged.map((p) => {
+            const s = peerStatusStore.get(p.alias);
+            return {
+              alias: p.alias,
+              alive: p.alive,
+              tag: p.tag,
+              state: s?.state,
+            };
+          }),
         };
         if (merged.length === 0) return toolText("No peers registered.", details);
-        const lines = merged.map(
-          (p) => `${p.alive ? "●" : "○"} ${p.alias}${p.tag === "cross" ? "  [cross-repo]" : ""}`,
-        );
+        const lines = merged.map((p) => {
+          const status = peerStatusStore.get(p.alias);
+          const statusSuffix = status ? `  [${status.state}]` : "";
+          const crossSuffix = p.tag === "cross" ? "  [cross-repo]" : "";
+          return `${p.alive ? "●" : "○"} ${p.alias}${crossSuffix}${statusSuffix}`;
+        });
         return toolText(lines.join("\n"), details);
       } catch (e) {
         return toolText(`c2c_list failed: ${e instanceof Error ? e.message : String(e)}`, { peers: [] } as ListToolDetails);
@@ -804,6 +841,16 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         sessionsBrokerRoot,
         crossRepoSessionsRegistered,
         crossRepoSessionsError,
+        peerStatusCount: peerStatusStore.size(),
+        peerStatusSample: peerStatusStore
+          .live()
+          .slice(0, 5)
+          .map(({ alias, entry }) => ({
+            alias,
+            state: entry.state,
+            since: entry.since,
+            ttlMs: entry.ttlMs,
+          })),
       });
       ctx.ui.notify(formatDebugTable(raw), "info");
     },
