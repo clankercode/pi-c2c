@@ -202,7 +202,7 @@ test("Integration: deriveRelayAlias -> parseRelayAlias round-trips", () => {
 
 test("Integration: computeHostHash output is valid for deriveRelayAlias", () => {
   const fs = fakeFs({ "/etc/machine-id": "abc" });
-  const net = fakeNet({ hostname: "xsm", mac: "aa:bb:cc:dd:ee:ff" });
+  const net = fakeNet({ hostname: "xsm" });
   const h = computeHostHash(fs, net);
   const alias = deriveRelayAlias("pi-test", h);
   assert.match(alias, /^pi-test#[0-9a-f]{12}$/);

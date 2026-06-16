@@ -810,33 +810,29 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "c2c_pi_copy_address",
-    label: "c2c copy address",
-    description: "Copy this node's public relay address to the clipboard. If the session is not connected to the public relay, returns the candidate address and suggests using /c2c-copy-address to connect interactively.",
+    name: "c2c_pi_local_info",
+    label: "c2c local info",
+    description: "Show local c2c node info: alias, session, relay address, broker status. Use when the user asks about their c2c address, identity, or connection status. If not connected to the public relay, advises that connecting enables cross-machine messaging.",
     parameters: Type.Object({}),
     renderShell: "self",
     async execute() {
       const r = ready();
       if (!r) return toolText(notReadyText);
 
-      let addr = relayRegistered ? relayAddress : undefined;
+      const info = buildLocalInfoText();
+      const addr = relayRegistered ? relayAddress : undefined;
+
+      const parts = [info];
+
       if (!addr) {
-        // Not relay-registered — compute the address but don't auto-register.
-        // The tool result tells the agent the status so it can inform the user.
-        const hostHash = computeHostHash();
-        const candidate = deriveRelayAlias(r.identity.alias, hostHash);
-        return toolText(
-          `Not connected to public relay. Candidate address: ${candidate}\n` +
-            `Use /c2c-copy-address to interactively connect and copy.`,
+        parts.push("");
+        parts.push(
+          "Connect to the public relay to get a persistent address and receive messages over the network. " +
+            "Use /c2c-local-info to interactively connect.",
         );
       }
 
-      try {
-        await copyToClipboard(addr);
-        return toolText(`Copied relay address to clipboard: ${addr}`);
-      } catch {
-        return toolText(`Relay address: ${addr}  (clipboard copy failed)`);
-      }
+      return toolText(parts.join("\n"));
     },
   });
 
@@ -861,25 +857,57 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       renderRoomsResult((result.details as RoomsToolDetails) ?? { rooms: [] }, context.isError, theme),
   });
 
+  // --- local info helpers ------------------------------------------------
+
+  /** Build a formatted local info screen. Shared by the command and tool. */
+  function buildLocalInfoText(): string {
+    const alias = identity?.alias ?? "(not registered)";
+    const sessionId = identity?.sessionId ?? "(none)";
+    const addr = relayRegistered ? relayAddress ?? "---" : "---";
+    const xrepo = crossRepoEnabled
+      ? crossRepoSessionsRegistered
+        ? "connected"
+        : crossRepoSessionsError
+          ? `error: ${crossRepoSessionsError}`
+          : "not connected"
+      : "disabled";
+    const relay = !relayEnabled
+      ? "disabled (C2C_PI_RELAY=0)"
+      : relayRegistered
+        ? "connected"
+        : relayError
+          ? `error: ${relayError}`
+          : "not connected";
+
+    const lines = [
+      "c2c local info",
+      "─".repeat(36),
+      `  alias       ${alias}`,
+      `  session     ${sessionId}`,
+      `  address     ${addr}`,
+      "",
+      `  broker      ${registered ? "connected" : registerError ?? "not connected"}`,
+      `  cross-repo  ${xrepo}`,
+      `  relay       ${relay}`,
+      `  poll        ${pollIntervalMs}ms`,
+    ];
+
+    return lines.join("\n");
+  }
+
   /**
    * Attempt to register with the public relay interactively. Called by
-   * `/c2c-copy-address` when the session is not yet relay-registered.
+   * `/c2c-local-info` when the session is not yet relay-registered.
    * Returns the relay alias on success, or undefined on failure/cancel.
    */
   async function ensureRelayRegistered(
     ui: ExtensionContext["ui"],
   ): Promise<string | undefined> {
     if (!relayEnabled) {
-      const choice = await ui.select("Public relay disabled", [
-        "Enable relay (C2C_PI_RELAY=1)",
-        "Cancel",
-      ]);
-      if (choice?.startsWith("Enable")) {
-        ui.notify(
-          'Set C2C_PI_RELAY=1 in your environment and restart the session.',
-          "info",
-        );
-      }
+      ui.notify(
+        "Relay is disabled. Set C2C_PI_RELAY=1 and restart to enable.",
+        "info",
+      );
       return undefined;
     }
     if (!identity || !cli) {
@@ -887,7 +915,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       return undefined;
     }
 
-    const choice = await ui.select("Not connected to public relay", [
+    const choice = await ui.select("Connect to public relay?", [
       "Connect now",
       "Cancel",
     ]);
@@ -1070,19 +1098,35 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     },
   });
 
-  pi.registerCommand("c2c-copy-address", {
-    description: "Copy this node's public relay address to clipboard",
+  pi.registerCommand("c2c-local-info", {
+    description: "Show local c2c info (alias, address, brokers, relay) with option to copy address",
     handler: async (_args, ctx) => {
-      let addr = relayRegistered ? relayAddress : undefined;
-      if (!addr) {
-        addr = await ensureRelayRegistered(ctx.ui);
-        if (!addr) return;
+      // If not relay-connected yet, offer to connect first.
+      if (!relayRegistered && relayEnabled) {
+        const connected = await ensureRelayRegistered(ctx.ui);
+        if (connected) {
+          // Refresh the info screen after connecting.
+        }
       }
-      try {
-        await copyToClipboard(addr);
-        ctx.ui.notify(`Copied relay address to clipboard: ${addr}`, "info");
-      } catch {
-        ctx.ui.notify(`Relay address: ${addr}  (copy failed — copy manually)`, "warning");
+
+      // Show the info screen with actionable options.
+      const info = buildLocalInfoText();
+      const addr = relayRegistered ? relayAddress : undefined;
+
+      const options: string[] = [];
+      if (addr) {
+        options.push(`📋 Copy address: ${addr}`);
+      }
+      options.push("Close");
+
+      const choice = await ctx.ui.select(info, options);
+      if (choice?.startsWith("📋 Copy address")) {
+        try {
+          await copyToClipboard(addr!);
+          ctx.ui.notify(`Copied: ${addr}`, "info");
+        } catch {
+          ctx.ui.notify(`Address: ${addr}  (clipboard copy failed)`, "warning");
+        }
       }
     },
   });
