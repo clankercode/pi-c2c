@@ -6,7 +6,9 @@
  * throttled and coalesced so rapid event flapping does not spam the broker.
  */
 
-export type StatusState = "idle" | "processing" | "tool" | "input";
+export type KnownStatusState = "idle" | "processing" | "tool" | "input";
+/** Accept any string so peers with newer state vocabularies still render cleanly. */
+export type StatusState = KnownStatusState | (string & {});
 
 export interface StatusEnvelope {
   event: "status";
@@ -49,6 +51,8 @@ function ttlFor(state: StatusState, opts: Required<StatusTrackerOptions>): numbe
     case "processing":
       return opts.processingTtlMs;
     case "idle":
+      return opts.idleTtlMs;
+    default:
       return opts.idleTtlMs;
   }
 }
@@ -272,5 +276,5 @@ export function parseStatusEnvelope(content: string): StatusEnvelope | null {
 }
 
 function isValidState(value: string): value is StatusState {
-  return value === "idle" || value === "processing" || value === "tool" || value === "input";
+  return value.length > 0 && value.length <= 64;
 }

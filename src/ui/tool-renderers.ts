@@ -26,7 +26,7 @@ export interface ListPeerInfo {
   alive: boolean;
   tag?: "local" | "cross";
   /** Last known runtime state from the peer status store, if recorded. */
-  state?: "idle" | "processing" | "tool" | "input";
+  state?: string;
 }
 
 export interface ListToolDetails {

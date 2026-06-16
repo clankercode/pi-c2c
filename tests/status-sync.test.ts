@@ -159,9 +159,14 @@ test("formatStatusEnvelope round-trips through parseStatusEnvelope", () => {
 });
 
 test("parseStatusEnvelope rejects invalid states and bad TTLs", () => {
-  assert.equal(parseStatusEnvelope('<c2c event="status" from="x" state="unknown" since="t" ttl_ms="100" />'), null);
   assert.equal(parseStatusEnvelope('<c2c event="status" from="x" state="idle" since="t" ttl_ms="abc" />'), null);
   assert.equal(parseStatusEnvelope("not an envelope"), null);
+});
+
+test("parseStatusEnvelope accepts arbitrary peer-defined states", () => {
+  const parsed = parseStatusEnvelope('<c2c event="status" from="x" state="testing" since="t" ttl_ms="100" />');
+  assert.ok(parsed);
+  assert.equal(parsed!.state, "testing");
 });
 
 test("formatStatusEnvelope escapes XML special characters", () => {
