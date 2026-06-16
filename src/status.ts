@@ -16,19 +16,32 @@ import { Theme, type ThemeColor } from "@earendil-works/pi-coding-agent";
  * Build the colored status text shown in pi's default status bar.
  *
  * Registered peers get a green dot; unregistered/failed registration gets a
- * yellow dot. The alias is shown in the default text color.
+ * yellow dot. The alias is shown in the default text color. When unregistered,
+ * a short reason (if known) is appended in dim text so the user can see WHY
+ * the bar is yellow without opening the tools panel.
  */
-export function formatStatus(alias: string, registered: boolean, theme: Theme): string {
+export function formatStatus(
+  alias: string,
+  registered: boolean,
+  theme: Theme,
+  reason?: string,
+): string {
   const indicator = registered
     ? theme.fg("success", "●")
     : theme.fg("warning", "●");
-  return `${indicator}${theme.fg("text", ` ${alias}`)}`;
+  const aliasPart = theme.fg("text", ` ${alias}`);
+  const reasonPart = !registered && reason
+    ? theme.fg("muted", ` (${reason})`)
+    : "";
+  return `${indicator}${aliasPart}${reasonPart}`;
 }
 
 /** Shared global state read by the theme monkeypatch for custom footers. */
 export interface PiC2cBarState {
   alias?: string;
   registered?: boolean;
+  /** Short human-readable reason for the current registered state (e.g. "broker unreachable"). */
+  reason?: string;
 }
 
 /** Colorize a c2c status rendered by a custom footer (e.g. pi-bar). */
@@ -46,7 +59,8 @@ export function renderPatchedStatus(
     // may have contributed, then render exactly one colored bullet.
     const alias = text.slice(4).trim().replace(/^●+\s*/, "");
     const registered = state?.registered ?? false;
-    return `${original(registered ? "success" : "warning", "●")} ${original("text", alias)}`;
+    const reason = !registered && state?.reason ? ` (${state.reason})` : "";
+    return `${original(registered ? "success" : "warning", "●")} ${original("text", alias)}${reason ? original("muted", reason) : ""}`;
   }
 
   return undefined;

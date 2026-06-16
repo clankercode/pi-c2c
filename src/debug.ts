@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 export type DebugStatus = "ok" | "warning" | "error";
 
 export interface DebugProblem {
-  severity: "warning" | "error";
+  severity: "info" | "warning" | "error";
   field: string;
   message: string;
   remedy: string;
@@ -21,7 +21,7 @@ export interface DebugStateInput {
       getSessionId?: () => string;
     };
   } | null;
-  barState: { alias?: string; registered?: boolean };
+  barState: { alias?: string; registered?: boolean; reason?: string };
   pollIntervalMs: number;
   hostSessionEnv: string | undefined;
   prevSessionId: string | undefined;
@@ -104,6 +104,15 @@ export function collectDebugProblems(state: DebugStateInput): DebugProblem[] {
     });
   }
 
+  if (!state.registered && state.barState.reason) {
+    problems.push({
+      severity: "warning",
+      field: "barReason",
+      message: `bar carries: ${state.barState.reason}`,
+      remedy: "this is the same reason shown in the yellow pi-bar dot",
+    });
+  }
+
   return problems;
 }
 
@@ -140,6 +149,7 @@ export function collectDebugState(state: DebugStateInput): string {
     `alias: ${alias}`,
     `sessionId: ${sessionId}`,
     `registered: ${state.registered}`,
+    `registerError: ${state.registerError ?? "(none)"}`,
     `status: ${status}`,
     `brokerRoot: ${brokerRoot}`,
     `brokerRootEnv: ${brokerRootEnv ?? "(not set)"}`,
@@ -153,7 +163,7 @@ export function collectDebugState(state: DebugStateInput): string {
     `piBarPatched: ${state.piBarPatched}`,
     `spoolDir: ${state.spoolDir}`,
     `spoolFiles: ${spoolFiles}`,
-    `barState: ${JSON.stringify({ alias: state.barState.alias, registered: state.barState.registered })}`,
+    `barState: ${JSON.stringify({ alias: state.barState.alias, registered: state.barState.registered, reason: state.barState.reason })}`,
   ];
 
   const lines: string[] = [];

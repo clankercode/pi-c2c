@@ -72,6 +72,94 @@ function toolText(text: string) {
   return { content: [{ type: "text" as const, text }], details: undefined };
 }
 
+/**
+ * Render the raw `collectDebugState` text as a small two-column table.
+ * Field rows are aligned with `│`; the problems section gets its own box.
+ * Long values are wrapped at `MAX_VALUE_WIDTH` so the table fits in a
+ * pi notification without horizontal scroll.
+ */
+export function formatDebugTable(raw: string): string {
+  const MAX_KEY_WIDTH = 18;
+  const MAX_VALUE_WIDTH = 64;
+
+  const wrap = (s: string, width: number): string[] => {
+    if (s.length <= width) return [s];
+    const out: string[] = [];
+    let i = 0;
+    while (i < s.length) {
+      out.push(s.slice(i, i + width));
+      i += width;
+    }
+    return out;
+  };
+
+  const lines: string[] = [];
+  const problems: string[] = [];
+  let inProblems = false;
+
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("=== c2c pi debug ===")) continue;
+    if (line.startsWith("=== problems ===")) {
+      inProblems = true;
+      continue;
+    }
+    if (inProblems) {
+      problems.push(line);
+      continue;
+    }
+    const m = line.match(/^([^:]+):\s*(.*)$/);
+    if (!m) {
+      lines.push(line);
+      continue;
+    }
+    const [, key, value] = m;
+    const k = key.padEnd(MAX_KEY_WIDTH, " ");
+    const v = wrap(value, MAX_VALUE_WIDTH);
+    lines.push(`│ ${k} │ ${v[0].padEnd(MAX_VALUE_WIDTH, " ")} │`);
+    for (let i = 1; i < v.length; i++) {
+      lines.push(`│ ${" ".repeat(MAX_KEY_WIDTH)} │ ${v[i].padEnd(MAX_VALUE_WIDTH, " ")} │`);
+    }
+  }
+
+  // total width = "│ " (2) + key (MAX_KEY_WIDTH) + " │ " (3) + value (MAX_VALUE_WIDTH) + " │" (1) = 2 + 18 + 3 + 64 + 1 = 88
+  // border needs (88 - 2) = 86 dashes between corners.
+  const innerWidth = MAX_KEY_WIDTH + MAX_VALUE_WIDTH + 6; // 2 + key + 3 + value + 1
+  const border = `┌${"─".repeat(innerWidth)}┐`;
+  const mid = `├${"─".repeat(innerWidth)}┤`;
+  const bottom = `└${"─".repeat(innerWidth)}┘`;
+
+  let out = border + "\n";
+  out += lines.join("\n") + "\n";
+  out += bottom;
+
+  if (problems.length > 0) {
+    out += "\n\n";
+    out += border + "\n";
+    out += `│ problems${" ".repeat(innerWidth - 9)} │\n`;
+    out += mid + "\n";
+    for (const p of problems) {
+      if (p.startsWith("    remedy: ")) {
+        const content = p.slice(4);
+        // wrap long remedy text
+        for (let i = 0; i < content.length; i += MAX_VALUE_WIDTH) {
+          const chunk = content.slice(i, i + MAX_VALUE_WIDTH);
+          out += `│   ${chunk.padEnd(innerWidth - 3, " ")} │\n`;
+        }
+      } else {
+        // wrap problem lines
+        const wrapWidth = innerWidth - 3; // "│ " + content + " │"
+        for (let i = 0; i < p.length; i += wrapWidth) {
+          const chunk = p.slice(i, i + wrapWidth);
+          out += `│ ${chunk.padEnd(innerWidth - 2, " ")} │\n`;
+        }
+      }
+    }
+    out += bottom;
+  }
+
+  return out;
+}
+
 function readPollInterval(): number {
   const raw = Number.parseInt(process.env.C2C_PI_POLL_INTERVAL_MS ?? "", 10);
   return Number.isFinite(raw) && raw >= 1000 ? raw : DEFAULT_POLL_INTERVAL_MS;
@@ -90,6 +178,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   let cli: C2cCli | null = null;
   let identity: Identity | null = null;
   let registered = false;
+  let registerError: string | undefined;
   let ctxRef: ExtensionContext | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let shuttingDown = false;
@@ -224,14 +313,19 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     if (res.ok) {
       barState.alias = identity.alias;
       barState.registered = true;
+      barState.reason = undefined;
+      registerError = undefined;
       ctx.ui.setStatus(STATUS_KEY, formatStatus(identity.alias, true, ctx.ui.theme));
       ctx.ui.notify(`c2c: registered as ${identity.alias}`, "info");
     } else {
+      const reason = res.error ?? "unknown error";
       barState.alias = identity.alias;
       barState.registered = false;
-      ctx.ui.setStatus(STATUS_KEY, formatStatus(identity.alias, false, ctx.ui.theme));
+      barState.reason = reason;
+      registerError = reason;
+      ctx.ui.setStatus(STATUS_KEY, formatStatus(identity.alias, false, ctx.ui.theme, reason));
       ctx.ui.notify(
-        `c2c: registration failed (${res.error ?? "unknown"}). Tools available; run 'c2c doctor'.`,
+        `c2c: registration failed (${reason}). Tools available; run 'c2c doctor'.`,
         "warning",
       );
     }
@@ -289,6 +383,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         version: PI_C2C_VERSION,
         identity,
         registered,
+        registerError,
         ctxRef,
         barState,
         pollIntervalMs,
@@ -479,6 +574,30 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         `poll interval: ${pollIntervalMs}ms`,
       ];
       ctx.ui.notify(lines.join("\n"), "info");
+    },
+  });
+
+  pi.registerCommand("c2c-pi-debug", {
+    description: "Show pi-c2c debug state as a table (alias, registration, broker, env)",
+    handler: async (_args, ctx) => {
+      const raw = collectDebugState({
+        version: PI_C2C_VERSION,
+        identity,
+        registered,
+        registerError,
+        ctxRef,
+        barState,
+        pollIntervalMs,
+        hostSessionEnv: gstate().hostSessionEnv,
+        prevSessionId: gstate().prevSessionId,
+        autoJoinRooms: readAutoJoinRooms(),
+        piBarPatched: Boolean((globalThis as Record<string, unknown>).__piC2cStatusFgPatched),
+        spoolDir: SPOOL_DIR,
+        pid: process.pid,
+        cwdFallback: process.cwd(),
+        env: process.env,
+      });
+      ctx.ui.notify(formatDebugTable(raw), "info");
     },
   });
 
