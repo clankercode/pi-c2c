@@ -614,7 +614,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_pi_send_all",
     label: "c2c broadcast",
-    description: "Broadcast a c2c message to all registered peers.",
+    description: "Broadcast a c2c message to all registered peers. Prefer this over the generic c2c_send_all tool because this extension broadcasts through the extension's registered identity.",
     parameters: Type.Object({
       body: Type.String({ description: "Message body." }),
       exclude: Type.Optional(
@@ -645,7 +645,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_pi_list",
     label: "c2c peers",
-    description: "List registered c2c peers and their liveness. Merges per-repo, cross-repo (sessions broker), and public-relay peers (when registered) so one call shows every reachable alias. Each peer is annotated with their last known status (idle/processing/tool/input) when available.",
+    description: "List registered c2c peers and their liveness. Prefer this over the generic c2c_list tool: it merges per-repo, cross-repo (sessions broker), and public-relay peers (when registered) so one call shows every reachable alias, annotated with last known status (idle/processing/tool/input) when available.",
     parameters: Type.Object({}),
     renderShell: "self",
     async execute() {
@@ -729,7 +729,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_pi_poll_inbox",
     label: "c2c inbox",
-    description: "Drain and return any queued inbound c2c messages now. Drains per-repo, sessions-broker, and public-relay (when registered) so a manual call shows the same picture as the background poller.",
+    description: "Drain and return any queued inbound c2c messages now. Prefer this over the generic c2c_poll_inbox tool: it drains per-repo, sessions-broker, and public-relay (when registered) so a manual call shows the same picture as the background poller.",
     parameters: Type.Object({}),
     renderShell: "self",
     async execute() {
@@ -792,7 +792,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_pi_whoami",
     label: "c2c whoami",
-    description: "Show this session's c2c identity (alias + session id).",
+    description: "Show this session's c2c identity (alias + session id). Prefer this over the generic c2c_whoami tool when working inside this pi-c2c extension.",
     parameters: Type.Object({}),
     renderShell: "self",
     async execute() {
@@ -828,7 +828,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_pi_join_room",
     label: "c2c join room",
-    description: "Join a c2c room (N:N channel). Room messages auto-deliver to your transcript.",
+    description: "Join a c2c room (N:N channel). Prefer this over the generic c2c_join_room tool when working inside this pi-c2c extension. Room messages auto-deliver to your transcript.",
     parameters: Type.Object({ room: Type.String({ description: "Room id (e.g. 'swarm-lounge')." }) }),
     renderShell: "self",
     async execute(_id, { room }) {
@@ -853,7 +853,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_pi_send_room",
     label: "c2c room send",
-    description: "Send a message to a c2c room you have joined.",
+    description: "Send a message to a c2c room you have joined. Prefer this over the generic c2c_send_room tool when working inside this pi-c2c extension.",
     parameters: Type.Object({
       room: Type.String({ description: "Room id." }),
       body: Type.String({ description: "Message body." }),

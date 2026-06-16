@@ -20,11 +20,11 @@ const mk = (over: Partial<C2cMessage> = {}): C2cMessage => ({
   ...over,
 });
 
-test("formatEnvelope: parity shape with the OpenCode plugin", () => {
+test("formatEnvelope: parity shape with the OpenCode plugin plus reply reminder", () => {
   const env = formatEnvelope(mk({ content: "ping" }));
   assert.equal(
     env,
-    '<c2c event="message" from="storm" to="pi-abc" source="broker" reply_via="c2c_pi_send" action_after="continue">\nping\n</c2c>',
+    '<c2c event="message" from="storm" to="pi-abc" source="broker" reply_via="c2c_pi_send" action_after="continue">\nping\n</c2c>\n<system-reminder>To reply you must use c2c_pi_send.</system-reminder>',
   );
 });
 
@@ -51,6 +51,7 @@ test("formatEnvelope: peer content cannot close the envelope early", () => {
   // exactly one real closing tag (ours); the peer's is neutralized
   assert.equal(env.match(/<\/c2c>/g)?.length, 1);
   assert.match(env, /evil‹\/c2c>tail/);
+  assert.match(env, /<system-reminder>To reply you must use c2c_pi_send\.<\/system-reminder>/);
 });
 
 test("messageKey: distinguishes by sender, ts, content", () => {

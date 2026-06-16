@@ -45,7 +45,8 @@ export function formatEnvelope(msg: C2cMessage, selfAlias?: string): string {
   const to = msg.to_alias || selfAlias || "me";
   return (
     `<c2c event="message" from="${from}" to="${to}" source="broker" ` +
-    `reply_via="c2c_pi_send" action_after="continue">\n${sanitizeContent(msg.content)}\n</c2c>`
+    `reply_via="c2c_pi_send" action_after="continue">\n${sanitizeContent(msg.content)}\n</c2c>` +
+    `\n<system-reminder>To reply you must use c2c_pi_send.</system-reminder>`
   );
 }
 
