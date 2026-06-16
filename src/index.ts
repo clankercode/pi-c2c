@@ -18,6 +18,8 @@
  * c2c-side changes are required.
  */
 
+import * as os from "node:os";
+import * as path from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { C2cCli, type C2cMessage, type ExecFn } from "./c2c-cli.ts";
@@ -25,15 +27,19 @@ import { establishIdentity, type Identity } from "./identity.ts";
 import {
   DeliveryDedup,
   deliveryOptionsFor,
+  filterNovel,
   formatEnvelope,
+  markDelivered,
   notifySummary,
-  selectNovel,
 } from "./delivery.ts";
+import { clearSpool, readSpool, writeSpool } from "./spool.ts";
 
 export const PI_C2C_VERSION = "0.1.0";
 
 const STATUS_KEY = "c2c";
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
+const SESSION_ENV = "C2C_MCP_SESSION_ID";
+const SPOOL_DIR = path.join(os.homedir(), ".pi", "c2c");
 
 /** A pi tool/command result is a list of text blocks plus opaque details. */
 function toolText(text: string) {
@@ -59,6 +65,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   let registered = false;
   let ctxRef: ExtensionContext | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let shuttingDown = false;
   const dedup = new DeliveryDedup();
   const pollIntervalMs = readPollInterval();
 
@@ -74,26 +81,62 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     return run;
   }
 
-  /** Inject novel messages into the transcript. `triggerTurn` when idle. */
-  function deliver(msgs: C2cMessage[]): void {
-    const novel = selectNovel(msgs, dedup);
-    if (novel.length === 0) return;
+  /**
+   * Inject already-filtered messages into the transcript. Returns true if the
+   * injection was enqueued; false if `pi.sendMessage` threw (e.g. the runtime
+   * went stale mid-reload) so the caller can keep them spooled for retry.
+   */
+  function inject(novel: C2cMessage[]): boolean {
+    if (novel.length === 0) return true;
     const body = novel.map((m) => formatEnvelope(m, identity?.alias)).join("\n\n");
     const idle = ctxRef?.isIdle() ?? true;
-    pi.sendMessage({ customType: "c2c", content: body, display: true }, deliveryOptionsFor(idle));
-    ctxRef?.ui.notify(notifySummary(novel), "info");
+    try {
+      pi.sendMessage({ customType: "c2c", content: body, display: true }, deliveryOptionsFor(idle));
+    } catch {
+      return false;
+    }
+    try {
+      ctxRef?.ui.notify(notifySummary(novel), "info");
+    } catch {
+      // notification is cosmetic — never let it fail a delivery
+    }
+    return true;
   }
 
-  /** Background poll: drain the inbox and deliver anything new. Best-effort. */
+  /**
+   * Background poll: replay the spool + drain the inbox, then deliver anything
+   * new. Best-effort and loss-resistant:
+   *   - drained messages are spooled to disk BEFORE injection, so a crash or a
+   *     stale-runtime sendMessage failure does not lose them (replayed next
+   *     tick / next session start);
+   *   - dedup is marked only AFTER a successful injection;
+   *   - during shutdown we never drain/inject (the spool carries anything
+   *     already pulled to the next start).
+   */
   async function pollTick(): Promise<void> {
-    if (!cli || !identity) return;
+    if (!cli || !identity || shuttingDown) return;
+    const sid = identity.sessionId;
     await serializeDrain(async () => {
+      if (shuttingDown) return;
+      let drained: C2cMessage[] = [];
       try {
-        const msgs = await cli!.pollInbox();
-        if (msgs.length > 0) deliver(msgs);
+        drained = await cli!.pollInbox();
       } catch {
-        // Broker hiccup — try again next tick; do not crash the timer.
+        return; // broker hiccup — retry next tick
       }
+      const combined = [...readSpool(SPOOL_DIR, sid), ...drained];
+      const novel = filterNovel(combined, dedup);
+      if (novel.length === 0) {
+        if (combined.length > 0) clearSpool(SPOOL_DIR, sid); // already delivered
+        return;
+      }
+      writeSpool(SPOOL_DIR, sid, novel); // persist before injecting
+      if (shuttingDown) return; // teardown started — leave spool for next start
+      if (inject(novel)) {
+        markDelivered(novel, dedup);
+        clearSpool(SPOOL_DIR, sid);
+      }
+      // else: spool persists, dedup unmarked → retried next tick
     });
   }
 
@@ -101,6 +144,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
 
   pi.on("session_start", async (_event, ctx) => {
     ctxRef = ctx;
+    shuttingDown = false;
     const exec: ExecFn = (command, args, options) =>
       pi.exec(command, args, { ...options, cwd: ctx.cwd });
     cli = new C2cCli({ exec });
@@ -109,9 +153,16 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     const res = await establishIdentity(cli, {
       piSessionId,
       configuredAlias: process.env.C2C_PI_ALIAS,
+      sessionIdEnv: process.env[SESSION_ENV],
     });
     identity = res.identity;
     registered = res.ok;
+
+    // Export our session id so every child `c2c` invocation resolves THIS
+    // session as the caller — the broker's caller-owns-alias check then
+    // accepts our sends, and whoami/rooms resolve the right identity.
+    // (pi's exec options carry no env field, so we set it on the process.)
+    process.env[SESSION_ENV] = identity.sessionId;
 
     if (res.ok) {
       ctx.ui.setStatus(STATUS_KEY, identity.alias);
@@ -145,6 +196,9 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
+    // Set the flag BEFORE clearing the timer so any in-flight pollTick that is
+    // still awaiting a drain bails out before injecting into a stale runtime.
+    shuttingDown = true;
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
@@ -174,7 +228,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const r = ready();
       if (!r) return toolText(notReadyText);
       try {
-        await r.cli.send(target, body, { from: r.identity.alias });
+        await r.cli.send(target, body);
         return toolText(`Sent to ${target}.`);
       } catch (e) {
         return toolText(`c2c_send failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -196,7 +250,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const r = ready();
       if (!r) return toolText(notReadyText);
       try {
-        await r.cli.sendAll(body, { from: r.identity.alias, exclude });
+        await r.cli.sendAll(body, { exclude });
         return toolText("Broadcast sent.");
       } catch (e) {
         return toolText(`c2c_send_all failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -215,9 +269,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       try {
         const peers = await r.cli.list();
         if (peers.length === 0) return toolText("No peers registered.");
-        const lines = peers.map(
-          (p) => `${p.alive ? "●" : "○"} ${p.alias}${p.lastSeenAge != null ? ` (seen ${p.lastSeenAge}s ago)` : ""}`,
-        );
+        const lines = peers.map((p) => `${p.alive ? "●" : "○"} ${p.alias}`);
         return toolText(lines.join("\n"));
       } catch (e) {
         return toolText(`c2c_list failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -233,10 +285,19 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     async execute() {
       const r = ready();
       if (!r) return toolText(notReadyText);
+      const sid = r.identity.sessionId;
       try {
-        const msgs = await serializeDrain(() => r.cli.pollInbox());
-        // Mark delivered so the background poller does not re-inject them.
-        const novel = selectNovel(msgs, dedup);
+        // Returning the messages in the tool result IS the delivery, so we can
+        // mark them delivered + clear the spool synchronously here (no async
+        // inject gap). Replay the spool too so a manual poll surfaces anything
+        // a prior background tick drained but failed to inject.
+        const novel = await serializeDrain(async () => {
+          const combined = [...readSpool(SPOOL_DIR, sid), ...(await r.cli.pollInbox())];
+          const fresh = filterNovel(combined, dedup);
+          markDelivered(fresh, dedup);
+          clearSpool(SPOOL_DIR, sid);
+          return fresh;
+        });
         if (novel.length === 0) return toolText("(no messages)");
         return toolText(novel.map((m) => formatEnvelope(m, r.identity.alias)).join("\n\n"));
       } catch (e) {
@@ -287,7 +348,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const r = ready();
       if (!r) return toolText(notReadyText);
       try {
-        await r.cli.sendRoom(room, body, r.identity.alias);
+        await r.cli.sendRoom(room, body);
         return toolText(`Sent to room ${room}.`);
       } catch (e) {
         return toolText(`c2c_send_room failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -362,9 +423,15 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     handler: async (_args, ctx) => {
       const r = ready();
       if (!r) return ctx.ui.notify(notReadyText, "warning");
+      const sid = r.identity.sessionId;
       try {
-        const msgs = await serializeDrain(() => r.cli.pollInbox());
-        const novel = selectNovel(msgs, dedup);
+        const novel = await serializeDrain(async () => {
+          const combined = [...readSpool(SPOOL_DIR, sid), ...(await r.cli.pollInbox())];
+          const fresh = filterNovel(combined, dedup);
+          markDelivered(fresh, dedup);
+          clearSpool(SPOOL_DIR, sid);
+          return fresh;
+        });
         ctx.ui.notify(
           novel.length ? novel.map((m) => `${m.from_alias}: ${m.content}`).join("\n") : "(no messages)",
           "info",
@@ -387,7 +454,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const target = m[1];
       const body = m[2];
       try {
-        await r.cli.send(target, body, { from: r.identity.alias });
+        await r.cli.send(target, body);
         ctx.ui.notify(`Sent to ${target}.`, "info");
       } catch (e) {
         ctx.ui.notify(`c2c send failed: ${e instanceof Error ? e.message : String(e)}`, "error");

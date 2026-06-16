@@ -55,6 +55,16 @@ test("computeIdentity: end-to-end pure derivation", () => {
   assert.match(id.alias, /^pi-[0-9a-f]{6}$/);
 });
 
+test("computeIdentity: ambient C2C_MCP_SESSION_ID is used verbatim (no pi- prefix)", () => {
+  const id = computeIdentity({ piSessionId: "sess-123", sessionIdEnv: "host-session-xyz" });
+  assert.equal(id.sessionId, "host-session-xyz");
+});
+
+test("computeIdentity: blank ambient session id falls back to derived", () => {
+  const id = computeIdentity({ piSessionId: "sess-123", sessionIdEnv: "   " });
+  assert.equal(id.sessionId, "pi-sess-123");
+});
+
 function fakeExec(result: { stdout?: string; code?: number; stderr?: string }): {
   exec: ExecFn;
   calls: Array<{ command: string; args: string[] }>;

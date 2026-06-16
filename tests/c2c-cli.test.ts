@@ -46,16 +46,16 @@ test("parseMessages: skips entries missing from_alias/content; tolerates missing
   assert.deepEqual(msgs[0], { from_alias: "a", to_alias: "", content: "ok", ts: 0 });
 });
 
-test("parsePeers: well-formed, defaults, and alive coercion", () => {
+test("parsePeers: well-formed, defaults, and alive coercion (real list --json shape)", () => {
   const json = JSON.stringify([
-    { alias: "storm", session_id: "s1", alive: true, lastSeenAge: 3 },
+    { alias: "storm", session_id: "s1", alive: true, registered_at: 1700000000 },
     { alias: "ember", session_id: "s2", alive: false },
     { alias: "ghost" }, // missing fields
     { session_id: "s4" }, // no alias -> dropped
   ]);
   const peers = parsePeers(json);
   assert.equal(peers.length, 3);
-  assert.deepEqual(peers[0], { alias: "storm", session_id: "s1", alive: true, lastSeenAge: 3 });
+  assert.deepEqual(peers[0], { alias: "storm", session_id: "s1", alive: true, registered_at: 1700000000 });
   assert.deepEqual(peers[1], { alias: "ember", session_id: "s2", alive: false });
   assert.deepEqual(peers[2], { alias: "ghost", session_id: "", alive: false });
 });
@@ -104,18 +104,11 @@ test("run: non-zero exit throws C2cError with stderr", async () => {
   });
 });
 
-test("whoami: appends --session-id when scoped, parses result", async () => {
+test("whoami: never passes --session-id (CLI rejects it; identity from env)", async () => {
   const { exec, calls } = fakeExec({ stdout: '{"session_id":"sid-9","alias":"pi-test"}' });
   const cli = new C2cCli({ exec, sessionId: "sid-9" });
   const me = await cli.whoami();
   assert.deepEqual(me, { session_id: "sid-9", alias: "pi-test" });
-  assert.deepEqual(calls[0].args, ["whoami", "--json", "--session-id", "sid-9"]);
-});
-
-test("whoami: no session id omits the flag", async () => {
-  const { exec, calls } = fakeExec({ stdout: '{"session_id":"x","alias":"y"}' });
-  const cli = new C2cCli({ exec });
-  await cli.whoami();
   assert.deepEqual(calls[0].args, ["whoami", "--json"]);
 });
 
@@ -142,20 +135,26 @@ test("pollInbox: drain vs peek arg shape + parse", async () => {
   assert.deepEqual(peek.calls[0].args, ["poll-inbox", "--json", "--session-id", "sid-2", "--peek"]);
 });
 
-test("send: with and without --from", async () => {
+test("send: inserts -- before positionals, with and without --from", async () => {
   const a = fakeExec({});
   await new C2cCli({ exec: a.exec }).send("storm", "hello there");
-  assert.deepEqual(a.calls[0].args, ["send", "storm", "hello there"]);
+  assert.deepEqual(a.calls[0].args, ["send", "--", "storm", "hello there"]);
 
   const b = fakeExec({});
   await new C2cCli({ exec: b.exec }).send("storm", "hi", { from: "pi-test" });
-  assert.deepEqual(b.calls[0].args, ["send", "--from", "pi-test", "storm", "hi"]);
+  assert.deepEqual(b.calls[0].args, ["send", "--from", "pi-test", "--", "storm", "hi"]);
 });
 
-test("sendAll: from + exclude", async () => {
+test("send: leading-dash target/body are not parsed as flags", async () => {
+  const { exec, calls } = fakeExec({});
+  await new C2cCli({ exec }).send("-weird", "-ok body");
+  assert.deepEqual(calls[0].args, ["send", "--", "-weird", "-ok body"]);
+});
+
+test("sendAll: from + exclude + -- before body", async () => {
   const { exec, calls } = fakeExec({});
   await new C2cCli({ exec }).sendAll("broadcast", { from: "pi-test", exclude: ["a", "b"] });
-  assert.deepEqual(calls[0].args, ["send-all", "--from", "pi-test", "--exclude", "a,b", "broadcast"]);
+  assert.deepEqual(calls[0].args, ["send-all", "--from", "pi-test", "--exclude", "a,b", "--", "broadcast"]);
 });
 
 test("bin override is honored", async () => {
@@ -166,7 +165,12 @@ test("bin override is honored", async () => {
 
 // --- rooms ------------------------------------------------------------------
 
-test("parseRoomList: string array, object array, and mixed/garbage", () => {
+test("parseRoomList: real my-rooms shape (room_id), string array, mixed/garbage", () => {
+  // real `c2c rooms my-rooms --json`: [{room_id, member_count, alive_count}]
+  assert.deepEqual(
+    parseRoomList('[{"room_id":"swarm-lounge","member_count":2},{"room_id":"ops"}]'),
+    ["swarm-lounge", "ops"],
+  );
   assert.deepEqual(parseRoomList('["swarm-lounge","ops"]'), ["swarm-lounge", "ops"]);
   assert.deepEqual(parseRoomList('[{"room":"a"},{"name":"b"},{"id":"c"}]'), ["a", "b", "c"]);
   assert.deepEqual(parseRoomList('[{"room":"a"},null,5,{"nope":"x"}]'), ["a"]);
@@ -174,20 +178,24 @@ test("parseRoomList: string array, object array, and mixed/garbage", () => {
   assert.deepEqual(parseRoomList("{}"), []);
 });
 
-test("joinRoom / leaveRoom build correct args", async () => {
+test("joinRoom / leaveRoom build correct args with -- separator", async () => {
   const j = fakeExec({});
   await new C2cCli({ exec: j.exec }).joinRoom("swarm-lounge", "pi-x");
-  assert.deepEqual(j.calls[0].args, ["rooms", "join", "--alias", "pi-x", "swarm-lounge"]);
+  assert.deepEqual(j.calls[0].args, ["rooms", "join", "--alias", "pi-x", "--", "swarm-lounge"]);
 
   const l = fakeExec({});
   await new C2cCli({ exec: l.exec }).leaveRoom("swarm-lounge", "pi-x");
-  assert.deepEqual(l.calls[0].args, ["rooms", "leave", "--alias", "pi-x", "swarm-lounge"]);
+  assert.deepEqual(l.calls[0].args, ["rooms", "leave", "--alias", "pi-x", "--", "swarm-lounge"]);
 });
 
-test("sendRoom builds --from + room + body", async () => {
-  const { exec, calls } = fakeExec({});
-  await new C2cCli({ exec }).sendRoom("ops", "deploy done", "pi-x");
-  assert.deepEqual(calls[0].args, ["rooms", "send", "--from", "pi-x", "ops", "deploy done"]);
+test("sendRoom: identity via env by default; --from optional; -- before positionals", async () => {
+  const a = fakeExec({});
+  await new C2cCli({ exec: a.exec }).sendRoom("ops", "deploy done");
+  assert.deepEqual(a.calls[0].args, ["rooms", "send", "--", "ops", "deploy done"]);
+
+  const b = fakeExec({});
+  await new C2cCli({ exec: b.exec }).sendRoom("ops", "deploy done", { from: "pi-x" });
+  assert.deepEqual(b.calls[0].args, ["rooms", "send", "--from", "pi-x", "--", "ops", "deploy done"]);
 });
 
 test("myRooms parses room ids", async () => {
@@ -197,10 +205,10 @@ test("myRooms parses room ids", async () => {
   assert.deepEqual(calls[0].args, ["rooms", "my-rooms", "--json"]);
 });
 
-test("roomHistory builds args + parses messages", async () => {
+test("roomHistory builds args (-- before room) + parses messages", async () => {
   const msgs = [{ from_alias: "storm", to_alias: "ops", content: "hi", ts: 1 }];
   const { exec, calls } = fakeExec({ stdout: JSON.stringify(msgs) });
   const got = await new C2cCli({ exec }).roomHistory("ops", 10);
   assert.equal(got.length, 1);
-  assert.deepEqual(calls[0].args, ["rooms", "history", "--json", "--limit", "10", "ops"]);
+  assert.deepEqual(calls[0].args, ["rooms", "history", "--json", "--limit", "10", "--", "ops"]);
 });

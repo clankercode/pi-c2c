@@ -60,6 +60,13 @@ export interface IdentityInputs {
   configuredAlias?: string | null;
   /** Fallback session base when pi has no session id. */
   fallbackSessionId?: string;
+  /**
+   * Ambient C2C_MCP_SESSION_ID, if already set in the environment (e.g. a
+   * future `c2c start pi` supervisor). When present and non-empty it is used
+   * verbatim as the session id — no `pi-` prefix — so the extension binds to
+   * the session the host already established instead of inventing a new one.
+   */
+  sessionIdEnv?: string | null;
 }
 
 export interface Identity {
@@ -69,7 +76,8 @@ export interface Identity {
 
 /** Compute the identity (pure) without touching the broker. */
 export function computeIdentity(inputs: IdentityInputs): Identity {
-  const sessionId = deriveSessionId(inputs.piSessionId, inputs.fallbackSessionId);
+  const ambient = inputs.sessionIdEnv?.trim();
+  const sessionId = ambient ? ambient : deriveSessionId(inputs.piSessionId, inputs.fallbackSessionId);
   const alias = resolveAlias({ configured: inputs.configuredAlias, sessionId });
   return { alias, sessionId };
 }

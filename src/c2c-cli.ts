@@ -34,12 +34,14 @@ export interface C2cMessage {
   ts: number;
 }
 
-/** A peer as reported by `c2c list`. */
+/** A peer as reported by `c2c list --json`. The base output carries
+ * `session_id`, `alias`, `alive`, and `registered_at` (epoch seconds); a
+ * formatted `last_seen` string only appears with `--enriched`. */
 export interface C2cPeer {
   alias: string;
   session_id: string;
   alive: boolean;
-  lastSeenAge?: number;
+  registered_at?: number;
 }
 
 /** Identity as reported by `c2c whoami`. */
@@ -110,7 +112,7 @@ export function parsePeers(stdout: string): C2cPeer[] {
       session_id: asString(r.session_id),
       alive: r.alive === true,
     };
-    if (typeof r.lastSeenAge === "number") peer.lastSeenAge = r.lastSeenAge;
+    if (typeof r.registered_at === "number") peer.registered_at = r.registered_at;
     out.push(peer);
   }
   return out;
@@ -134,7 +136,7 @@ export function parseRoomList(stdout: string): string[] {
     }
     if (raw && typeof raw === "object") {
       const r = raw as Record<string, unknown>;
-      const id = r.room ?? r.name ?? r.id;
+      const id = r.room_id ?? r.room ?? r.name ?? r.id;
       if (typeof id === "string" && id) out.push(id);
     }
   }
@@ -195,7 +197,9 @@ export class C2cCli {
   }
 
   async whoami(): Promise<C2cWhoami | null> {
-    const res = await this.run(this.withSession(["whoami", "--json"]));
+    // `whoami` resolves identity from the C2C_MCP_SESSION_ID env var; it does
+    // NOT accept --session-id (the CLI rejects it with exit 124).
+    const res = await this.run(["whoami", "--json"]);
     return parseWhoami(res.stdout);
   }
 
@@ -219,11 +223,13 @@ export class C2cCli {
     return parseMessages(res.stdout);
   }
 
-  /** Send a DM to `target`. `from` overrides the sender alias when set. */
+  /** Send a DM to `target`. `from` overrides the sender alias when set
+   * (normally identity is resolved from the C2C_MCP_SESSION_ID env). The `--`
+   * separator guards against a target/body beginning with `-`. */
   async send(target: string, body: string, opts?: { from?: string }): Promise<void> {
     const args = ["send"];
     if (opts?.from) args.push("--from", opts.from);
-    args.push(target, body);
+    args.push("--", target, body);
     await this.run(args);
   }
 
@@ -232,7 +238,7 @@ export class C2cCli {
     const args = ["send-all"];
     if (opts?.from) args.push("--from", opts.from);
     if (opts?.exclude?.length) args.push("--exclude", opts.exclude.join(","));
-    args.push(body);
+    args.push("--", body);
     await this.run(args);
   }
 
@@ -240,17 +246,21 @@ export class C2cCli {
 
   /** Join a room as `alias`. */
   async joinRoom(room: string, alias: string): Promise<void> {
-    await this.run(["rooms", "join", "--alias", alias, room]);
+    await this.run(["rooms", "join", "--alias", alias, "--", room]);
   }
 
   /** Leave a room as `alias`. */
   async leaveRoom(room: string, alias: string): Promise<void> {
-    await this.run(["rooms", "leave", "--alias", alias, room]);
+    await this.run(["rooms", "leave", "--alias", alias, "--", room]);
   }
 
-  /** Send a message to a room as `from`. */
-  async sendRoom(room: string, body: string, from: string): Promise<void> {
-    await this.run(["rooms", "send", "--from", from, room, body]);
+  /** Send a message to a room. `from` overrides the sender alias when set
+   * (normally resolved from the C2C_MCP_SESSION_ID env). */
+  async sendRoom(room: string, body: string, opts?: { from?: string }): Promise<void> {
+    const args = ["rooms", "send"];
+    if (opts?.from) args.push("--from", opts.from);
+    args.push("--", room, body);
+    await this.run(args);
   }
 
   /** List the rooms this session is a member of. */
@@ -261,7 +271,7 @@ export class C2cCli {
 
   /** Fetch recent room history. */
   async roomHistory(room: string, limit = 50): Promise<C2cMessage[]> {
-    const res = await this.run(["rooms", "history", "--json", "--limit", String(limit), room]);
+    const res = await this.run(["rooms", "history", "--json", "--limit", String(limit), "--", room]);
     return parseMessages(res.stdout);
   }
 }

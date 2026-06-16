@@ -45,3 +45,15 @@ A native pi extension making a pi session a first-class c2c peer
   poll tool), idle-aware injection via pi.sendMessage. session_shutdown clears timer.
 - CLI extended with room methods + parseRoomList. 40 tests total, tsc clean.
 - Command handler `args` is a STRING (not array) — fixed /c2c-send to regex-parse.
+
+### Review round 1 (adversarial workflow: 5 lenses + per-finding refutation)
+- 16 findings, 13 confirmed, 3 refuted (refuted: followUp-drop, no-session-ready-guard, multi-turn-overlap — all matched design intent).
+- Fixes (all 13):
+  - **BLOCKER** send-from-refused: pi never set C2C_MCP_SESSION_ID → broker caller-owns-alias check refused all sends.
+    Fix: `process.env.C2C_MCP_SESSION_ID = identity.sessionId` after register; dropped `--from` on tool sends (env resolves caller). Respects ambient env if preset.
+  - whoami no longer passes `--session-id` (CLI rejects it, exit 124) — resolves from env.
+  - `--` end-of-options separator before all positionals (send/sendAll/sendRoom/join/leave/roomHistory) — leading-dash target/body no longer parsed as flags (covers 3 findings incl. 2 security).
+  - parseRoomList reads real `room_id`; parsePeers reads `registered_at` not nonexistent `lastSeenAge` (dropped seen-ago UI).
+  - Delivery reliability: new `spool.ts` (drained msgs persisted before inject, cleared after success, replayed on tick/start); split `selectNovel`→`filterNovel`(no mutate)+`markDelivered`(after success); `shuttingDown` flag stops in-flight drain during teardown.
+  - `sanitizeContent` neutralizes `<c2c`/`</c2c` in peer content → no envelope breakout / forged-frame prompt injection.
+- Gate: 54 tests, tsc clean.

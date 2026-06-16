@@ -20,16 +20,31 @@ export interface DeliveryOptions {
 }
 
 /**
+ * Neutralize peer-controlled content so it cannot forge or escape a c2c
+ * envelope (prompt-injection defense). A malicious peer could otherwise embed
+ * a literal `</c2c>` to close our frame early, or a `<c2c ...>` to forge a new
+ * "from the broker" frame and impersonate another peer / inject instructions.
+ * We replace the `<` of any `<c2c`/`</c2c` token with a look-alike (U+2039
+ * SINGLE LEFT-POINTING ANGLE QUOTATION MARK) so the text stays human-readable
+ * but no longer parses as our envelope tag.
+ */
+export function sanitizeContent(content: string): string {
+  // Match `<c2c` / `</c2c` with optional whitespace around the `<` and slash.
+  return content.replace(/<(\s*\/?\s*c2c)/gi, "‹$1");
+}
+
+/**
  * Render a single message as a c2c envelope for injection. Identical shape to
  * the OpenCode plugin's `formatEnvelope` (including `reply_via="c2c_send"`,
- * which is this extension's send-tool name).
+ * which is this extension's send-tool name). Peer content is sanitized so it
+ * cannot break out of or forge the envelope.
  */
 export function formatEnvelope(msg: C2cMessage, selfAlias?: string): string {
   const from = msg.from_alias || "unknown";
   const to = msg.to_alias || selfAlias || "me";
   return (
     `<c2c event="message" from="${from}" to="${to}" source="broker" ` +
-    `reply_via="c2c_send" action_after="continue">\n${msg.content}\n</c2c>`
+    `reply_via="c2c_send" action_after="continue">\n${sanitizeContent(msg.content)}\n</c2c>`
   );
 }
 
@@ -70,18 +85,27 @@ export class DeliveryDedup {
 }
 
 /**
- * Filter `msgs` to those not yet seen, marking the novel ones as seen. Returns
- * messages in input order. Mutates `dedup`.
+ * Filter `msgs` to those not yet delivered, WITHOUT marking them. Returns
+ * messages in input order. Does NOT mutate `dedup` — callers must
+ * `markDelivered` only AFTER a successful injection, so a failed inject (or a
+ * process death) leaves the messages eligible for retry rather than silently
+ * swallowed.
  */
-export function selectNovel(msgs: C2cMessage[], dedup: DeliveryDedup): C2cMessage[] {
+export function filterNovel(msgs: C2cMessage[], dedup: DeliveryDedup): C2cMessage[] {
   const out: C2cMessage[] = [];
+  const seenThisBatch = new Set<string>();
   for (const m of msgs) {
     const key = messageKey(m);
-    if (dedup.has(key)) continue;
-    dedup.add(key);
+    if (dedup.has(key) || seenThisBatch.has(key)) continue;
+    seenThisBatch.add(key);
     out.push(m);
   }
   return out;
+}
+
+/** Mark messages as delivered so they are not re-injected. */
+export function markDelivered(msgs: C2cMessage[], dedup: DeliveryDedup): void {
+  for (const m of msgs) dedup.add(messageKey(m));
 }
 
 /**
