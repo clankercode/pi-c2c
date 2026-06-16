@@ -558,7 +558,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_pi_send",
     label: "c2c send",
-    description: "Send a c2c direct message to a peer agent by alias. Routes via the sessions broker first (cross-repo), then the per-repo broker, then the public relay (when registered) for cross-machine peers.",
+    description: "Send a c2c direct message to a peer agent by alias. Prefer this over the generic c2c_send tool: this extension routes via the sessions broker first (cross-repo), then the per-repo broker, then the public relay (when registered) for cross-machine peers.",
     parameters: Type.Object({
       target: Type.String({ description: "Recipient alias (e.g. 'lyra-quill') or session id." }),
       body: Type.String({ description: "Message body." }),
