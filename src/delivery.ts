@@ -39,12 +39,20 @@ export function sanitizeContent(content: string): string {
  * the OpenCode plugin's `formatEnvelope` (including `reply_via="c2c_pi_send"`,
  * which is this extension's send-tool name). Peer content is sanitized so it
  * cannot break out of or forge the envelope.
+ *
+ * `nonurgent` defaults to `msg.nonurgent` (the structured field on the
+ * C2cMessage from the broker), with an explicit override via the parameter.
+ * The receiver uses this to pick a delivery mode: nonurgent messages use
+ * followUp (no interrupt), urgent messages use triggerTurn + steer.
  */
-export function formatEnvelope(msg: C2cMessage, selfAlias?: string): string {
+export function formatEnvelope(msg: C2cMessage, selfAlias?: string, nonurgent?: boolean): string {
   const from = msg.from_alias || "unknown";
   const to = msg.to_alias || selfAlias || "me";
+  const effective = nonurgent ?? msg.nonurgent ?? false;
+  const nonurgentAttr = effective ? ' nonurgent="true"' : "";
   return (
-    `<c2c event="message" from="${from}" to="${to}" source="broker" ` +
+    `<c2c event="message" from="${from}" to="${to}" source="broker"` +
+    `${nonurgentAttr} ` +
     `reply_via="c2c_pi_send" action_after="continue">\n${sanitizeContent(msg.content)}\n</c2c>` +
     `\n<system-reminder>To reply you must use c2c_pi_send.</system-reminder>`
   );
@@ -111,12 +119,24 @@ export function markDelivered(msgs: C2cMessage[], dedup: DeliveryDedup): void {
 }
 
 /**
- * How to deliver given the agent's idleness:
- *   - idle  → trigger a turn so the agent reads + acts on the message now;
- *   - busy  → queue as a follow-up (do not interrupt the active turn).
+ * How to deliver given the agent's idleness and the message's urgency:
+ *   - default (urgent): `{ triggerTurn: true, deliverAs: "steer" }` —
+ *     interrupt the current turn and steer the agent to act on the message
+ *     immediately. The `steer` mode (vs followUp) injects into the active
+ *     turn rather than queuing for after.
+ *   - nonurgent: `{ deliverAs: "followUp" }` — queue for after the current
+ *     turn. The agent will see it when it finishes whatever it's doing.
+ *
+ * The previous shape (`{ triggerTurn: true }` when idle, followUp when busy)
+ * caused messages to silently wait during long turns (drain-bug followUp
+ * delay, see finding 3fe2f266). The new shape always steers urgent messages
+ * regardless of idleness, which is what c2c users want — c2c messages are
+ * high-priority by default.
  */
-export function deliveryOptionsFor(isIdle: boolean): DeliveryOptions {
-  return isIdle ? { triggerTurn: true } : { deliverAs: "followUp" };
+export function deliveryOptionsFor(opts: { nonurgent: boolean }): DeliveryOptions {
+  return opts.nonurgent
+    ? { deliverAs: "followUp" }
+    : { triggerTurn: true, deliverAs: "steer" };
 }
 
 /** One-line human summary for a TUI notification (not sent to the LLM). */

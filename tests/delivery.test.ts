@@ -111,9 +111,42 @@ test("markDelivered: idempotent and only affects keyed messages", () => {
   assert.equal(filterNovel([m], d).length, 0);
 });
 
-test("deliveryOptionsFor: idle triggers a turn, busy queues followUp", () => {
-  assert.deepEqual(deliveryOptionsFor(true), { triggerTurn: true });
-  assert.deepEqual(deliveryOptionsFor(false), { deliverAs: "followUp" });
+test("deliveryOptionsFor: urgent (default) triggers a turn and steers", () => {
+  assert.deepEqual(
+    deliveryOptionsFor({ nonurgent: false }),
+    { triggerTurn: true, deliverAs: "steer" },
+  );
+});
+
+test("deliveryOptionsFor: nonurgent uses followUp (no interrupt, no steer)", () => {
+  assert.deepEqual(
+    deliveryOptionsFor({ nonurgent: true }),
+    { deliverAs: "followUp" },
+  );
+});
+
+test("formatEnvelope: urgent (default) omits nonurgent attribute", () => {
+  const env = formatEnvelope(mk(), "me");
+  // mk() has to_alias="pi-abc"; when selfAlias is "me" the resolved to
+  // is the message's to_alias (the recipient is known).
+  assert.match(env, /<c2c event="message" from="storm"/);
+  assert.match(env, /reply_via="c2c_pi_send"/);
+  assert.doesNotMatch(env, /nonurgent=/);
+});
+
+test("formatEnvelope: nonurgent=true adds nonurgent=\"true\" attribute", () => {
+  const env = formatEnvelope(mk(), "me", true);
+  assert.match(env, /nonurgent="true"/);
+});
+
+test("formatEnvelope: msg.nonurgent defaults to nonurgent when not overridden", () => {
+  const env = formatEnvelope({ ...mk(), nonurgent: true }, "me");
+  assert.match(env, /nonurgent="true"/);
+});
+
+test("formatEnvelope: explicit nonurgent=false overrides msg.nonurgent=true", () => {
+  const env = formatEnvelope({ ...mk(), nonurgent: true }, "me", false);
+  assert.doesNotMatch(env, /nonurgent=/);
 });
 
 test("notifySummary: single vs many, with truncation", () => {

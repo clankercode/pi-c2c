@@ -38,6 +38,13 @@ export interface C2cMessage {
   to_alias: string;
   content: string;
   ts: number;
+  /**
+   * When true, the receiver should use followUp delivery (no interrupt,
+   * no steer) instead of the default triggerTurn+steer. Set by the sender
+   * (c2c_pi_send with nonurgent=true). Optional — when absent, default to
+   * urgent (c2c messages are high-priority by default).
+   */
+  nonurgent?: boolean;
 }
 
 /** A peer as reported by `c2c list --json`. The base output carries

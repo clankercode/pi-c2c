@@ -29,6 +29,12 @@ export interface DebugStateInput {
   crossRepoSessionsError?: string;
   peerStatusCount?: number;
   peerStatusSample?: Array<{ alias: string; state: string; since: number; ttlMs: number }>;
+  /**
+   * When the most recent followUp message was queued (ms since epoch).
+   * Undefined when no followUp is in flight. Useful for debugging the
+   * delivery delay — "this followUp has been waiting X seconds".
+   */
+  queuedSinceMs?: number;
   prevSessionId: string | undefined;
   autoJoinRooms: string[];
   piBarPatched: boolean;
@@ -176,6 +182,7 @@ export function collectDebugState(state: DebugStateInput): string {
     `crossRepoSessionsError: ${state.crossRepoSessionsError ?? "(none)"}`,
     `peerStatusCount: ${state.peerStatusCount ?? 0}`,
     `peerStatusSample: ${JSON.stringify(state.peerStatusSample ?? [])}`,
+    `queuedSinceMs: ${state.queuedSinceMs ?? "(none)"}`,
     `cwd: ${cwd}`,
     `piSessionId: ${piSessionId}`,
     `pid: ${state.pid}`,

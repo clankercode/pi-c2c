@@ -202,6 +202,12 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   let relayHostId: string | undefined;
   let relayHostIdVerified: boolean = false;
 
+  // Tracks when the most recent followUp message was queued (ms since
+  // epoch). Used by the renderer's status line and the debug output to
+  // surface "this followUp has been waiting X seconds" — useful for
+  // debugging the delivery delay.
+  let queuedSinceMs: number | undefined;
+
   // Serialize drains so the background poller and a manual `c2c_pi_poll_inbox`
   // tool never drain concurrently (which could split a batch).
   let drainChain: Promise<void> = Promise.resolve();
@@ -226,15 +232,27 @@ export default function c2cExtension(pi: ExtensionAPI): void {
    */
   function inject(novel: C2cMessage[]): boolean {
     if (novel.length === 0) return true;
+    // If any message in the batch is nonurgent, the whole batch uses
+    // followUp (no interrupt, no steer). Otherwise: triggerTurn+steer
+    // (interrupt the current turn and act now). This is the new default
+    // — see deliveryOptionsFor in delivery.ts.
+    const allNonurgent = novel.every((m) => m.nonurgent === true);
     const body = novel.map((m) => formatEnvelope(m, identity?.alias)).join("\n\n");
     const details: C2cDeliveryDetails = {
       count: novel.length,
       senders: [...new Set(novel.map((m) => m.from_alias || "unknown"))],
       selfAlias: identity?.alias,
     };
-    const idle = ctxRef?.isIdle() ?? true;
+    // Track queuedSince for followUp messages (used by the renderer's
+    // status line and the debug output).
+    if (allNonurgent) {
+      queuedSinceMs = Date.now();
+    }
     try {
-      pi.sendMessage({ customType: "c2c", content: body, display: true, details }, deliveryOptionsFor(idle));
+      pi.sendMessage(
+        { customType: "c2c", content: body, display: true, details },
+        deliveryOptionsFor({ nonurgent: allNonurgent }),
+      );
     } catch {
       return false;
     }
@@ -590,6 +608,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
             since: entry.since,
             ttlMs: entry.ttlMs,
           })),
+        queuedSinceMs,
       });
       return toolText(text);
     },
@@ -598,21 +617,25 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_pi_send",
     label: "c2c send",
-    description: "Send a c2c direct message to a peer agent by alias. Prefer this over the generic c2c_send tool: this extension routes via the sessions broker first (cross-repo), then the per-repo broker, then the public relay (when registered) for cross-machine peers.",
+    description: "Send a c2c direct message to a peer agent by alias. Prefer this over the generic c2c_send tool: this extension routes via the sessions broker first (cross-repo), then the per-repo broker, then the public relay (when registered) for cross-machine peers. Set `nonurgent` to opt out of interrupt+steer delivery on the receiver side (default is triggerTurn+steer — c2c messages are high-priority by default).",
     parameters: Type.Object({
       target: Type.String({ description: "Recipient alias (e.g. 'lyra-quill') or session id." }),
       body: Type.String({ description: "Message body." }),
+      nonurgent: Type.Optional(
+        Type.Boolean({ description: "If true, the receiver uses followUp delivery (no interrupt, no steer) instead of the default triggerTurn+steer. Use for non-time-sensitive messages like FYIs or status updates." }),
+      ),
     }),
     renderShell: "self",
-    async execute(_id, { target, body }) {
+    async execute(_id, { target, body, nonurgent }) {
       const r = ready();
-      const details: SendToolDetails = { kind: "dm", target };
+      const details: SendToolDetails = { kind: "dm", target, nonurgent: nonurgent ?? false };
       if (!r) return toolText(notReadyText, details);
       // Try each transport in order until one accepts the target.
       const hops = buildSendHops({ sessionsBrokerRoot, relayRegistered: relayRegistered && !!relayAddress });
       const result = await executeSend(r.cli, hops, target, body, relayAddress);
       if (result.ok) {
-        return toolText(`Sent to ${target} (via ${result.via}).`, details);
+        const tag = nonurgent ? " (nonurgent)" : "";
+        return toolText(`Sent to ${target} (via ${result.via})${tag}.`, details);
       }
       return toolText(`c2c_pi_send failed (${result.via}): ${result.message}`, details);
     },
@@ -1055,6 +1078,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
             since: entry.since,
             ttlMs: entry.ttlMs,
           })),
+        queuedSinceMs,
       });
       ctx.ui.notify(formatDebugTable(raw), "info");
     },

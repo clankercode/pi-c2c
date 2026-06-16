@@ -19,6 +19,12 @@ export interface SendToolDetails {
   kind: "dm" | "broadcast" | "room";
   target?: string;
   room?: string;
+  /**
+   * When true, the receiver uses followUp delivery (no interrupt, no
+   * steer) instead of the default triggerTurn+steer. Set by the sender
+   * via the c2c_pi_send tool's `nonurgent` parameter.
+   */
+  nonurgent?: boolean;
 }
 
 export interface ListPeerInfo {
