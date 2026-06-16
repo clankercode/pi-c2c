@@ -876,18 +876,42 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("c2c-peers", {
-    description: "List registered c2c peers",
+    description: "List registered c2c peers. Merges per-repo and cross-repo (sessions broker) peers; annotates each with their last-known status.",
     handler: async (_args, ctx) => {
       const r = ready();
       if (!r) return ctx.ui.notify(notReadyText, "warning");
       try {
-        const peers = await r.cli.list();
-        ctx.ui.notify(
-          peers.length
-            ? peers.map((p) => `${p.alive ? "●" : "○"} ${p.alias}`).join("\n")
-            : "No peers registered.",
-          "info",
-        );
+        // Per-repo broker list (always)
+        const localPeers = await r.cli.list();
+        // Cross-repo / sessions broker list (when enabled)
+        const remotePeers = sessionsBrokerRoot
+          ? await r.cli.list({ brokerRoot: sessionsBrokerRoot }).catch(() => [])
+          : [];
+        // Merge + dedup by session_id, prefer the live entry.
+        const bySid = new Map<string, { alias: string; alive: boolean; tag: "local" | "cross" }>();
+        for (const p of localPeers) {
+          bySid.set(p.session_id, { alias: p.alias, alive: p.alive, tag: "local" });
+        }
+        for (const p of remotePeers) {
+          const existing = bySid.get(p.session_id);
+          if (!existing) {
+            bySid.set(p.session_id, { alias: p.alias, alive: p.alive, tag: "cross" });
+          } else if (!existing.alive && p.alive) {
+            bySid.set(p.session_id, { alias: p.alias, alive: p.alive, tag: existing.tag });
+          }
+        }
+        const merged = Array.from(bySid.values()).sort((a, b) => {
+          if (a.alive !== b.alive) return a.alive ? -1 : 1;
+          return a.alias.localeCompare(b.alias);
+        });
+        if (merged.length === 0) return ctx.ui.notify("No peers registered.", "info");
+        const lines = merged.map((p) => {
+          const status = peerStatusStore.get(p.alias);
+          const statusSuffix = status ? `  [${status.state}]` : "";
+          const crossSuffix = p.tag === "cross" ? "  [cross-repo]" : "";
+          return `${p.alive ? "●" : "○"} ${p.alias}${crossSuffix}${statusSuffix}`;
+        });
+        ctx.ui.notify(lines.join("\n"), "info");
       } catch (e) {
         ctx.ui.notify(`c2c list failed: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
