@@ -73,25 +73,14 @@ function toolText(text: string) {
 }
 
 /**
- * Render the raw `collectDebugState` text as a small two-column table.
- * Field rows are aligned with `│`; the problems section gets its own box.
- * Long values are wrapped at `MAX_VALUE_WIDTH` so the table fits in a
- * pi notification without horizontal scroll.
+ * Render the raw `collectDebugState` text as a small aligned table for
+ * pi's `ctx.ui.notify`. The TUI strips trailing whitespace and may wrap
+ * lines, so we deliberately keep it minimal: aligned two-column key/value
+ * rows, no box-drawing characters, no right-side padding. Problems are
+ * listed under a `--- problems ---` header with a remedy line per problem.
  */
 export function formatDebugTable(raw: string): string {
-  const MAX_KEY_WIDTH = 18;
-  const MAX_VALUE_WIDTH = 64;
-
-  const wrap = (s: string, width: number): string[] => {
-    if (s.length <= width) return [s];
-    const out: string[] = [];
-    let i = 0;
-    while (i < s.length) {
-      out.push(s.slice(i, i + width));
-      i += width;
-    }
-    return out;
-  };
+  const KEY_WIDTH = 16;
 
   const lines: string[] = [];
   const problems: string[] = [];
@@ -109,54 +98,18 @@ export function formatDebugTable(raw: string): string {
     }
     const m = line.match(/^([^:]+):\s*(.*)$/);
     if (!m) {
-      lines.push(line);
+      if (line.length > 0) lines.push(line);
       continue;
     }
     const [, key, value] = m;
-    const k = key.padEnd(MAX_KEY_WIDTH, " ");
-    const v = wrap(value, MAX_VALUE_WIDTH);
-    lines.push(`│ ${k} │ ${v[0].padEnd(MAX_VALUE_WIDTH, " ")} │`);
-    for (let i = 1; i < v.length; i++) {
-      lines.push(`│ ${" ".repeat(MAX_KEY_WIDTH)} │ ${v[i].padEnd(MAX_VALUE_WIDTH, " ")} │`);
-    }
+    lines.push(`${key.padEnd(KEY_WIDTH, " ")}  ${value}`);
   }
 
-  // total width = "│ " (2) + key (MAX_KEY_WIDTH) + " │ " (3) + value (MAX_VALUE_WIDTH) + " │" (1) = 2 + 18 + 3 + 64 + 1 = 88
-  // border needs (88 - 2) = 86 dashes between corners.
-  const innerWidth = MAX_KEY_WIDTH + MAX_VALUE_WIDTH + 6; // 2 + key + 3 + value + 1
-  const border = `┌${"─".repeat(innerWidth)}┐`;
-  const mid = `├${"─".repeat(innerWidth)}┤`;
-  const bottom = `└${"─".repeat(innerWidth)}┘`;
-
-  let out = border + "\n";
-  out += lines.join("\n") + "\n";
-  out += bottom;
-
+  let out = lines.join("\n");
   if (problems.length > 0) {
-    out += "\n\n";
-    out += border + "\n";
-    out += `│ problems${" ".repeat(innerWidth - 9)} │\n`;
-    out += mid + "\n";
-    for (const p of problems) {
-      if (p.startsWith("    remedy: ")) {
-        const content = p.slice(4);
-        // wrap long remedy text
-        for (let i = 0; i < content.length; i += MAX_VALUE_WIDTH) {
-          const chunk = content.slice(i, i + MAX_VALUE_WIDTH);
-          out += `│   ${chunk.padEnd(innerWidth - 3, " ")} │\n`;
-        }
-      } else {
-        // wrap problem lines
-        const wrapWidth = innerWidth - 3; // "│ " + content + " │"
-        for (let i = 0; i < p.length; i += wrapWidth) {
-          const chunk = p.slice(i, i + wrapWidth);
-          out += `│ ${chunk.padEnd(innerWidth - 2, " ")} │\n`;
-        }
-      }
-    }
-    out += bottom;
+    out += "\n\n--- problems ---\n";
+    out += problems.join("\n");
   }
-
   return out;
 }
 

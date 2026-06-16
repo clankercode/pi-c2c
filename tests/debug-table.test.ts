@@ -1,5 +1,9 @@
 /**
  * Unit tests for the /c2c-pi-debug table renderer.
+ *
+ * The table is rendered for pi's TUI notify, which strips trailing
+ * whitespace and may wrap. We deliberately keep the output minimal:
+ * aligned two-column key/value rows, no box-drawing characters.
  */
 
 import { test } from "node:test";
@@ -21,76 +25,52 @@ cwd: /home/xertrov/src/c2c
     remedy: if multi-repo, set C2C_MCP_BROKER_ROOT in your shell or .c2c/repo.json
 `;
 
-test("formatDebugTable: renders a top/bottom border", () => {
+test("formatDebugTable: omits the === c2c pi debug === header", () => {
   const out = formatDebugTable(SAMPLE);
-  assert.ok(out.startsWith("┌"), `expected top border, got: ${out.slice(0, 20)}`);
-  assert.ok(out.includes("└"), "expected bottom border");
-  assert.ok(out.split("\n")[0].startsWith("┌─"), "top border should be ─");
-  assert.ok(out.split("\n")[0].endsWith("┐"), "top border should end with ┐");
+  assert.ok(!out.includes("=== c2c pi debug ==="), "should strip the source header");
 });
 
-test("formatDebugTable: every key row has a key/value separator", () => {
+test("formatDebugTable: each field is on its own line as 'key  value'", () => {
   const out = formatDebugTable(SAMPLE);
-  // Field rows look like: "│ <key padded to MAX_KEY_WIDTH> │ <value padded> │"
-  // The key is a single word (no spaces), padded to a fixed width. We use
-  // that to filter out wrapped problem lines (which start with "│ d default"
-  // or similar).
-  const fieldRows = pickFieldRows(out);
-  for (const row of fieldRows) {
-    const sep = row.indexOf("│ ", 2);
-    assert.ok(sep > 0, `field row missing key/value separator: ${row}`);
+  assert.ok(out.includes("version           0.1.0"), "expected aligned 'version' row");
+  assert.ok(out.includes("alias             pi-cbacea"));
+  assert.ok(out.includes("registered        true"));
+});
+
+test("formatDebugTable: key column is aligned (same indent for every row)", () => {
+  const out = formatDebugTable(SAMPLE);
+  // The key column is KEY_WIDTH (16) chars wide, followed by 2 spaces.
+  // The separator is at column 18 (0-based: 16 + 2 = 18). We use a regex
+  // to find the actual separator: <key padded to 16> + 2 spaces + value.
+  // The simpler check is: the value (the part after the padded key) starts
+  // at the same column on every row.
+  for (const line of out.split("\n")) {
+    if (line.startsWith("--- ") || line.startsWith("[") || line.startsWith("    remedy")) continue;
+    if (line.length === 0) continue;
+    // The line should be at least 18 chars (16 key + 2 separator), and the
+    // char at position 16 and 17 should be spaces.
+    if (line.length < 18) continue;
+    assert.equal(line[16], " ", `expected space at position 16: ${JSON.stringify(line)}`);
+    assert.equal(line[17], " ", `expected space at position 17: ${JSON.stringify(line)}`);
   }
 });
 
-test("formatDebugTable: pads the key column for alignment", () => {
+test("formatDebugTable: problems section appears after fields", () => {
   const out = formatDebugTable(SAMPLE);
-  const fieldRows = pickFieldRows(out);
-  assert.ok(fieldRows.length > 1, "need at least 2 field rows to test alignment");
-  const first = fieldRows[0].indexOf("│ ", 2);
-  for (const row of fieldRows) {
-    assert.equal(
-      row.indexOf("│ ", 2),
-      first,
-      `key/value separator offset mismatch: "${row}" (expected ${first})`,
-    );
-  }
+  const fieldsEnd = out.indexOf("\n\n");
+  const problemsStart = out.indexOf("--- problems ---");
+  assert.ok(problemsStart > 0, "should include '--- problems ---' header");
+  assert.ok(problemsStart > fieldsEnd, "problems should follow the fields block");
 });
 
-/**
- * A "field row" is a line of the debug table whose key is a single word.
- * The key appears right after "│ " (position 2), padded with trailing
- * spaces, and runs up to the next "│ " separator. Wrapped problem lines
- * and the problems header are excluded by checking that the trimmed key
- * contains no spaces.
- */
-function pickFieldRows(out: string): string[] {
-  return out.split("\n").filter((l) => {
-    if (!l.startsWith("│ ")) return false;
-    if (l.startsWith("│ problems")) return false;
-    const sep = l.indexOf("│ ", 2);
-    if (sep < 0) return false;
-    const key = l.slice(2, sep).trim();
-    if (key.length === 0 || key.includes(" ")) return false;
-    return true;
-  });
-}
-
-test("formatDebugTable: every field row ends with a closing border", () => {
+test("formatDebugTable: problems section includes severity, field, message, and remedy", () => {
   const out = formatDebugTable(SAMPLE);
-  const fieldRows = pickFieldRows(out);
-  for (const row of fieldRows) {
-    assert.ok(row.endsWith(" │"), `field row should end with " │": ${row}`);
-  }
+  const problemsBlock = out.slice(out.indexOf("--- problems ---"));
+  assert.ok(problemsBlock.includes("[warning] brokerRootEnv"), "should include the problem line");
+  assert.ok(problemsBlock.includes("remedy: if multi-repo"), "should include the remedy");
 });
 
-test("formatDebugTable: includes problems section when present", () => {
-  const out = formatDebugTable(SAMPLE);
-  assert.ok(out.includes("│ problems"), "should have a problems header row");
-  assert.ok(out.includes("brokerRootEnv"), "should include the problem field");
-  assert.ok(out.includes("remedy: if multi-repo"), "should include the remedy text");
-});
-
-test("formatDebugTable: omits problems section when none", () => {
+test("formatDebugTable: omits problems section when none present", () => {
   const raw = `=== c2c pi debug ===
 version: 0.1.0
 alias: pi-cbacea
@@ -98,17 +78,17 @@ registered: true
 status: ok
 `;
   const out = formatDebugTable(raw);
-  assert.ok(!out.includes("│ problems"), "should not have problems section when empty");
+  assert.ok(!out.includes("--- problems ---"), "should not have problems section when empty");
 });
 
-test("formatDebugTable: wraps long values at MAX_VALUE_WIDTH", () => {
-  const longPath = "/home/xertrov/very/long/path/to/some/place/" + "x".repeat(80);
-  const raw = `=== c2c pi debug ===
-spoolDir: ${longPath}
-`;
-  const out = formatDebugTable(raw);
-  const lines = out.split("\n").filter((l) => l.includes("x"));
-  assert.ok(lines.length > 1, "long value should wrap to multiple lines");
+test("formatDebugTable: output is short (no giant box-drawing borders)", () => {
+  const out = formatDebugTable(SAMPLE);
+  // No line should be longer than the longest key + 2 spaces + longest value.
+  // This guards against accidentally re-introducing box-drawing padding.
+  const lines = out.split("\n");
+  for (const line of lines) {
+    assert.ok(line.length < 200, `line too long (${line.length}): ${line.slice(0, 80)}…`);
+  }
 });
 
 test("formatDebugTable: integration with collectDebugState output", () => {
@@ -131,11 +111,12 @@ test("formatDebugTable: integration with collectDebugState output", () => {
   };
   const raw = collectDebugState(state);
   const out = formatDebugTable(raw);
-  // status: error appears as a key/value pair in the table
-  assert.ok(out.includes("│ status"), "status field row should be present");
-  assert.ok(out.includes("error"), "status value should be 'error'");
-  // registerError value should be present
-  assert.ok(out.includes("broker unreachable"), "registerError should be present");
-  // problems section header
-  assert.ok(out.includes("│ problems"), "should have problems section");
+  // status field is present and has value 'error' (separated by spaces)
+  assert.match(out, /^status\s+error$/m, "status field should be 'error'");
+  // registerError field is present
+  assert.match(out, /^registerError\s+broker unreachable$/m, "registerError should be 'broker unreachable'");
+  // problems section exists
+  assert.ok(out.includes("--- problems ---"));
+  // the brokerRootEnv problem is listed
+  assert.ok(out.includes("[warning] brokerRootEnv"));
 });
