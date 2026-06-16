@@ -537,8 +537,8 @@ export class C2cCli {
 
   /** Show current relay configuration. Returns the parsed JSON or null. */
   async relaySetupShow(opts?: { signal?: AbortSignal }): Promise<Record<string, unknown> | null> {
-    const res = await this.run(["relay", "setup", "--show", "--json"], { signal: opts?.signal });
     try {
+      const res = await this.run(["relay", "setup", "--show"], { signal: opts?.signal });
       const parsed = JSON.parse(res.stdout);
       return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
     } catch {
