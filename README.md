@@ -53,10 +53,24 @@ works during development):
 ## Development
 
 ```bash
-pnpm install
-pnpm test     # node:test via tsx
-pnpm check    # tsc --noEmit
+just install          # pnpm install
+just check            # tsc --noEmit
+just test             # all tests (unit + integration; integration self-skips without c2c)
+just test-integration # only the real-binary integration tests (requires `c2c` on PATH)
+just ci               # check + test
 ```
+
+### Testing & regression protection
+
+- **Unit tests** fixture out the `c2c` binary — fast, portable, cover parsing,
+  identity, delivery/dedup, spool, and arg construction.
+- **Integration tests** (`tests/integration.test.ts`) drive the real `C2cCli`
+  wrapper through an actual `c2c` process on an **isolated broker**
+  (`C2C_MCP_BROKER_ROOT`=temp dir — the shared broker is never touched). They
+  assert the exact CLI contracts this plugin depends on (register/whoami/list
+  shapes, env-resolved send, the `--` leading-dash guard, poll-inbox shape,
+  rooms `room_id`), so a c2c CLI change that would silently break the plugin
+  fails the suite instead. They **self-skip** when `c2c` is not on PATH.
 
 ## Architecture
 

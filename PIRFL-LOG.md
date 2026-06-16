@@ -80,3 +80,12 @@ Result: pi is a working first-class c2c peer. Auto-delivery into the transcript 
 
 ## Status: COMPLETE
 pi-c2c is a working first-class c2c peer. All blocker/major findings from both review rounds fixed and validated in the wild. v1 deferred (non-blocking): `c2c install pi` binary embedding, word-pair aliases, deeper room parity.
+
+### Regression protection (justfile + real-binary integration tests)
+- Added `justfile` (repo norm): `just check | test | test-integration | ci | install`.
+- Added `tests/integration.test.ts`: drives the real `C2cCli` wrapper through an actual
+  `c2c` process on an isolated broker (C2C_MCP_BROKER_ROOT=temp). Asserts the live CLI
+  contracts the plugin depends on (register/whoami/list, env-resolved send, `--` leading-dash
+  guard, poll-inbox shape, rooms join/my-rooms room_id/send/history). Self-skips when `c2c`
+  is absent. Closes the gap where unit tests (which fixture `c2c`) couldn't catch CLI contract drift.
+- Gate: 60 tests pass with c2c present (56 unit + 4 integration); integration skips cleanly without it. tsc clean.
