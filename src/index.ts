@@ -628,7 +628,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     renderShell: "self",
     async execute(_id, { target, body, nonurgent }) {
       const r = ready();
-      const details: SendToolDetails = { kind: "dm", target, nonurgent: nonurgent ?? false };
+      const details: SendToolDetails = { kind: "dm", target, body, nonurgent: nonurgent ?? false };
       if (!r) return toolText(notReadyText, details);
       // Try each transport in order until one accepts the target.
       const hops = buildSendHops({ sessionsBrokerRoot, relayRegistered: relayRegistered && !!relayAddress });
@@ -661,7 +661,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     renderShell: "self",
     async execute(_id, { body, exclude }) {
       const r = ready();
-      const details: SendToolDetails = { kind: "broadcast" };
+      const details: SendToolDetails = { kind: "broadcast", body };
       if (!r) return toolText(notReadyText, details);
       try {
         await r.cli.sendAll(body, { exclude });
@@ -852,7 +852,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     renderShell: "self",
     async execute(_id, { room, body }) {
       const r = ready();
-      const details: SendToolDetails = { kind: "room", room };
+      const details: SendToolDetails = { kind: "room", room, body };
       if (!r) return toolText(notReadyText, details);
       try {
         await r.cli.sendRoom(room, body);

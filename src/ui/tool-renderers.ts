@@ -19,6 +19,8 @@ export interface SendToolDetails {
   kind: "dm" | "broadcast" | "room";
   target?: string;
   room?: string;
+  /** Message body, used to render a truncated preview in the result. */
+  body?: string;
   /**
    * When true, the receiver uses followUp delivery (no interrupt, no
    * steer) instead of the default triggerTurn+steer. Set by the sender
@@ -93,11 +95,19 @@ export function renderSendCall(args: SendToolDetails, theme: Theme): Component {
   return new Text(parts.join(""), 0, 0);
 }
 
+/** Collapse whitespace and truncate a body to a one-line preview. */
+function previewBody(body: string | undefined, maxLen = 60): string {
+  if (!body) return "";
+  const oneline = body.replace(/\s+/g, " ").trim();
+  if (oneline.length <= maxLen) return oneline;
+  return `${oneline.slice(0, maxLen - 1)}…`;
+}
+
 /**
  * Result shown when a send tool finishes.
- *   ◈ c2c · sent to lyra-quill
- *   ◈ c2c · broadcast sent
- *   ◈ c2c · sent to room swarm-lounge
+ *   ◈ c2c · sent to lyra-quill · preview…
+ *   ◈ c2c · broadcast sent · preview…
+ *   ◈ c2c · sent to room swarm-lounge · preview…
  */
 export function renderSendResult(details: SendToolDetails, isError: boolean, theme: Theme): Component {
   if (isError) {
@@ -115,6 +125,11 @@ export function renderSendResult(details: SendToolDetails, isError: boolean, the
     case "room":
       parts.push(theme.fg("success", ` sent to room ${details.room ?? "unknown"}`));
       break;
+  }
+  const preview = previewBody(details.body);
+  if (preview) {
+    parts.push(theme.fg("borderMuted", " · "));
+    parts.push(theme.fg("toolOutput", preview));
   }
   return new Text(parts.join(""), 0, 0);
 }

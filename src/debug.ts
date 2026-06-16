@@ -27,6 +27,12 @@ export interface DebugStateInput {
   sessionsBrokerRoot?: string;
   crossRepoSessionsRegistered?: boolean;
   crossRepoSessionsError?: string;
+  relayEnabled?: boolean;
+  relayRegistered?: boolean;
+  relayAddress?: string;
+  relayHostId?: string;
+  relayHostIdVerified?: boolean;
+  relayError?: string;
   peerStatusCount?: number;
   peerStatusSample?: Array<{ alias: string; state: string; since: number; ttlMs: number }>;
   /**
@@ -180,6 +186,12 @@ export function collectDebugState(state: DebugStateInput): string {
     `sessionsBrokerRoot: ${state.sessionsBrokerRoot ?? "(disabled)"}`,
     `crossRepoSessionsRegistered: ${state.crossRepoSessionsRegistered ?? false}`,
     `crossRepoSessionsError: ${state.crossRepoSessionsError ?? "(none)"}`,
+    `relayEnabled: ${state.relayEnabled ?? true}`,
+    `relayRegistered: ${state.relayRegistered ?? false}`,
+    `relayAddress: ${state.relayAddress ?? "(none)"}`,
+    `relayHostId: ${state.relayHostId ?? "(none)"}`,
+    `relayHostIdVerified: ${state.relayHostIdVerified ?? false}`,
+    `relayError: ${state.relayError ?? "(none)"}`,
     `peerStatusCount: ${state.peerStatusCount ?? 0}`,
     `peerStatusSample: ${JSON.stringify(state.peerStatusSample ?? [])}`,
     `queuedSinceMs: ${state.queuedSinceMs ?? "(none)"}`,

@@ -54,14 +54,56 @@ describe("renderSendResult", () => {
     assert.ok(lines[0].includes("sent to lyra-quill"));
   });
 
+  it("renders a DM success with truncated body preview", () => {
+    const lines = renderSendResult(
+      { kind: "dm", target: "lyra-quill", body: "hello world this is a fairly long message that should be truncated" },
+      false,
+      plainTheme,
+    ).render(120);
+    assert.ok(lines[0].includes("sent to lyra-quill"));
+    assert.ok(lines[0].includes("hello world"));
+    assert.ok(lines[0].includes("…"));
+    assert.ok(!lines[0].includes("should be truncated"));
+  });
+
+  it("renders a DM success with short body preview unchanged", () => {
+    const lines = renderSendResult(
+      { kind: "dm", target: "lyra-quill", body: "hi" },
+      false,
+      plainTheme,
+    ).render(80);
+    assert.ok(lines[0].includes("sent to lyra-quill"));
+    assert.ok(lines[0].includes("hi"));
+  });
+
   it("renders a broadcast success", () => {
     const lines = renderSendResult({ kind: "broadcast" }, false, plainTheme).render(80);
     assert.ok(lines[0].includes("broadcast sent"));
   });
 
+  it("renders a broadcast success with body preview", () => {
+    const lines = renderSendResult(
+      { kind: "broadcast", body: "all hands" },
+      false,
+      plainTheme,
+    ).render(80);
+    assert.ok(lines[0].includes("broadcast sent"));
+    assert.ok(lines[0].includes("all hands"));
+  });
+
   it("renders a room send success", () => {
     const lines = renderSendResult({ kind: "room", room: "swarm-lounge" }, false, plainTheme).render(80);
     assert.ok(lines[0].includes("sent to room swarm-lounge"));
+  });
+
+  it("renders a room send success with body preview", () => {
+    const lines = renderSendResult(
+      { kind: "room", room: "swarm-lounge", body: "room message here" },
+      false,
+      plainTheme,
+    ).render(80);
+    assert.ok(lines[0].includes("sent to room swarm-lounge"));
+    assert.ok(lines[0].includes("room message here"));
   });
 
   it("renders an error", () => {
