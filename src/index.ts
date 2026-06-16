@@ -35,6 +35,7 @@ import {
 import { clearSpool, gcStaleSpools, readSpool, writeSpool } from "./spool.ts";
 import { formatStatus, installStatusColorPatch, type PiC2cBarState } from "./status.ts";
 import { collectDebugState } from "./debug.ts";
+import { createStatusTracker, formatStatusEnvelope, type StatusTracker } from "./status-sync.ts";
 import { registerC2cMessageRenderer, type C2cDeliveryDetails } from "./ui/compact-message.ts";
 import {
   renderInboxResult,
@@ -134,6 +135,11 @@ function readPollInterval(): number {
   return Number.isFinite(raw) && raw >= 1000 ? raw : DEFAULT_POLL_INTERVAL_MS;
 }
 
+function readStatusInterval(): number {
+  const raw = Number.parseInt(process.env.C2C_PI_STATUS_INTERVAL_MS ?? "", 10);
+  return Number.isFinite(raw) && raw >= 500 ? raw : 2_000;
+}
+
 function readAutoJoinRooms(): string[] {
   return (process.env.C2C_PI_AUTO_JOIN_ROOMS ?? "")
     .split(",")
@@ -154,6 +160,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   let shuttingDown = false;
   const dedup = new DeliveryDedup();
   const pollIntervalMs = readPollInterval();
+  let statusTracker: StatusTracker | null = null;
 
   // Cross-repo rendezvous: also register / list / send via the sessions
   // broker (`~/.c2c/sessions/broker` by default) so pi sessions in different
@@ -255,6 +262,39 @@ export default function c2cExtension(pi: ExtensionAPI): void {
 
   // --- lifecycle ------------------------------------------------------------
 
+  function updateStatusFromIdleCheck(): void {
+    if (!statusTracker) return;
+    statusTracker.transition(ctxRef?.isIdle() ?? true ? "idle" : "processing");
+  }
+
+  pi.on("input", (_event) => {
+    statusTracker?.transition("input");
+  });
+
+  pi.on("agent_start", () => {
+    statusTracker?.transition("processing");
+  });
+
+  pi.on("agent_end", () => {
+    updateStatusFromIdleCheck();
+  });
+
+  pi.on("turn_start", () => {
+    statusTracker?.transition("processing");
+  });
+
+  pi.on("turn_end", () => {
+    updateStatusFromIdleCheck();
+  });
+
+  pi.on("tool_execution_start", () => {
+    statusTracker?.transition("tool");
+  });
+
+  pi.on("tool_execution_end", () => {
+    updateStatusFromIdleCheck();
+  });
+
   pi.on("session_start", async (_event, ctx) => {
     ctxRef = ctx;
     shuttingDown = false;
@@ -314,6 +354,20 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       registerError = undefined;
       ctx.ui.setStatus(STATUS_KEY, formatStatus(identity.alias, true, ctx.ui.theme));
       ctx.ui.notify(`c2c: registered as ${identity.alias}`, "info");
+
+      // Start broadcasting runtime status to peers.
+      statusTracker = createStatusTracker({
+        alias: identity.alias,
+        minIntervalMs: readStatusInterval(),
+      });
+      statusTracker.setBroadcast(async (envelope) => {
+        if (!cli || !identity || shuttingDown) return;
+        try {
+          await cli.sendAll(formatStatusEnvelope(envelope), { exclude: [] });
+        } catch {
+          // Status broadcast is best-effort.
+        }
+      });
 
       // Cross-repo rendezvous: also register with the sessions broker so
       // other pi sessions in different repos can see this one. Failure is
@@ -376,6 +430,10 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
+    }
+    if (statusTracker) {
+      statusTracker.dispose();
+      statusTracker = null;
     }
     ctx.ui.setStatus(STATUS_KEY, undefined);
     barState.alias = undefined;
@@ -620,6 +678,20 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
+    name: "c2c_status",
+    label: "c2c status",
+    description: "Show this session's current c2c runtime status (idle/processing/tool/input).",
+    parameters: Type.Object({}),
+    renderShell: "self",
+    async execute() {
+      const s = statusTracker?.getStatus();
+      if (!s) return toolText("c2c: not registered yet (no status tracker).");
+      const sinceIso = new Date(s.since).toISOString();
+      return toolText(`state: ${s.state}\nsince: ${sinceIso}\nttl_ms: ${s.ttlMs}`);
+    },
+  });
+
+  pi.registerTool({
     name: "c2c_join_room",
     label: "c2c join room",
     description: "Join a c2c room (N:N channel). Room messages auto-deliver to your transcript.",
@@ -745,6 +817,15 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         identity ? `${identity.alias} (${identity.sessionId})` : "(not registered)",
         "info",
       );
+    },
+  });
+
+  pi.registerCommand("c2c-status-now", {
+    description: "Show this session's current c2c runtime status",
+    handler: async (_args, ctx) => {
+      const s = statusTracker?.getStatus();
+      if (!s) return ctx.ui.notify("c2c: not registered yet (no status tracker).", "warning");
+      ctx.ui.notify(`state: ${s.state}\nsince: ${new Date(s.since).toISOString()}\nttl_ms: ${s.ttlMs}`, "info");
     },
   });
 

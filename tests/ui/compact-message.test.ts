@@ -37,6 +37,10 @@ function envelope(from: string, body: string): string {
   return `<c2c event="message" from="${from}" to="me" source="broker" reply_via="c2c_send" action_after="continue">\n${body}\n</c2c>`;
 }
 
+function statusEnvelope(from: string, state: string): string {
+  return `<c2c event="status" from="${from}" state="${state}" since="2026-06-17T00:00:00.000Z" ttl_ms="60000" />`;
+}
+
 describe("parseC2cEnvelopes", () => {
   it("extracts sender and body from a single envelope", () => {
     const parsed = parseC2cEnvelopes(envelope("lyra-quill", "hello world"));
@@ -50,12 +54,29 @@ describe("parseC2cEnvelopes", () => {
     const parsed = parseC2cEnvelopes(content);
     assert.strictEqual(parsed.length, 2);
     assert.deepStrictEqual(
-      parsed.map((e) => ({ from: e.from, body: e.body })),
+      parsed.map((e) => ({ from: e.from, body: e.body, event: e.event })),
       [
-        { from: "a", body: "one" },
-        { from: "b", body: "two" },
+        { from: "a", body: "one", event: "message" },
+        { from: "b", body: "two", event: "message" },
       ],
     );
+  });
+
+  it("extracts status envelopes", () => {
+    const parsed = parseC2cEnvelopes(statusEnvelope("lyra-quill", "processing"));
+    assert.strictEqual(parsed.length, 1);
+    assert.strictEqual(parsed[0].from, "lyra-quill");
+    assert.strictEqual(parsed[0].event, "status");
+    assert.strictEqual(parsed[0].status?.state, "processing");
+  });
+
+  it("unwraps status envelopes delivered inside message envelopes", () => {
+    const wrapped = `<c2c event="message" from="lyra-quill" to="me" source="broker" reply_via="c2c_send" action_after="continue">\n${statusEnvelope("lyra-quill", "processing")}\n</c2c>`;
+    const parsed = parseC2cEnvelopes(wrapped);
+    assert.strictEqual(parsed.length, 1);
+    assert.strictEqual(parsed[0].event, "status");
+    assert.strictEqual(parsed[0].status?.state, "processing");
+    assert.strictEqual(parsed[0].from, "lyra-quill");
   });
 
   it("trims leading/trailing newlines from the body", () => {
@@ -68,6 +89,7 @@ describe("parseC2cEnvelopes", () => {
     assert.strictEqual(parsed.length, 1);
     assert.strictEqual(parsed[0].from, "c2c");
     assert.strictEqual(parsed[0].body, "just some text");
+    assert.strictEqual(parsed[0].event, "message");
   });
 
   it("returns an empty array for empty content", () => {
@@ -106,6 +128,17 @@ describe("buildCompactLine", () => {
     assert.ok(line.includes("raw text"));
   });
 
+  it("renders status envelopes compactly", () => {
+    const msg = makeMessage(statusEnvelope("lyra-quill", "processing"), {
+      count: 1,
+      senders: ["lyra-quill"],
+    });
+    const line = buildCompactLine(msg, plainTheme, 80);
+    assert.ok(line.includes("lyra-quill"));
+    assert.ok(line.includes("is processing"));
+    assert.ok(line.includes("◈ c2c"));
+  });
+
   it("handles content arrays by treating them as empty", () => {
     const msg = { content: [{ type: "text" }] as unknown[], details: { count: 1, senders: ["x"] } as C2cDeliveryDetails };
     const line = buildCompactLine(msg, plainTheme, 40);
@@ -142,6 +175,17 @@ describe("buildExpandedComponent", () => {
     assert.ok(joined.includes("message from lyra-quill"));
     assert.ok(joined.includes("hello"));
     assert.ok(joined.includes("world"));
+  });
+
+  it("renders status envelopes in expanded view", () => {
+    const msg = makeMessage(statusEnvelope("lyra-quill", "processing"), {
+      count: 1,
+      senders: ["lyra-quill"],
+    });
+    const lines = buildExpandedComponent(msg, plainTheme).render(80);
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("status from lyra-quill"));
+    assert.ok(joined.includes("state=processing"));
   });
 
   it("renders multiple messages", () => {
