@@ -23,6 +23,10 @@ export interface DebugStateInput {
   barState: { alias?: string; registered?: boolean; reason?: string };
   pollIntervalMs: number;
   hostSessionEnv: string | undefined;
+  crossRepoEnabled?: boolean;
+  sessionsBrokerRoot?: string;
+  crossRepoSessionsRegistered?: boolean;
+  crossRepoSessionsError?: string;
   prevSessionId: string | undefined;
   autoJoinRooms: string[];
   piBarPatched: boolean;
@@ -117,6 +121,18 @@ export function collectDebugProblems(state: DebugStateInput): DebugProblem[] {
     });
   }
 
+  if (state.crossRepoEnabled && state.registered && !state.crossRepoSessionsRegistered) {
+    problems.push({
+      severity: "warning",
+      field: "crossRepo",
+      message: `cross-repo (sessions broker) registration failed${
+        state.crossRepoSessionsError ? `: ${state.crossRepoSessionsError}` : ""
+      }`,
+      remedy:
+        "this session is invisible to pi sessions in other repos. Most common cause: alias_hijack_conflict (another repo's session owns the same alias). Set C2C_PI_CROSS_REPO=0 to disable, or check `c2c list` against the sessions broker for the colliding alias.",
+    });
+  }
+
   return problems;
 }
 
@@ -152,6 +168,10 @@ export function collectDebugState(state: DebugStateInput): string {
     `registered: ${state.registered}`,
     `registerError: ${state.registerError ?? "(none)"}`,
     `status: ${status}`,
+    `crossRepoEnabled: ${state.crossRepoEnabled ?? false}`,
+    `sessionsBrokerRoot: ${state.sessionsBrokerRoot ?? "(disabled)"}`,
+    `crossRepoSessionsRegistered: ${state.crossRepoSessionsRegistered ?? false}`,
+    `crossRepoSessionsError: ${state.crossRepoSessionsError ?? "(none)"}`,
     `cwd: ${cwd}`,
     `piSessionId: ${piSessionId}`,
     `pid: ${state.pid}`,

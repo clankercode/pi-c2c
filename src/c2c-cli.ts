@@ -6,6 +6,12 @@
  * the extension can pass `pi.exec` in production and tests can pass a fake —
  * no real `c2c` process is ever spawned in unit tests.
  *
+ * Broker-root override: the c2c CLI reads `C2C_MCP_BROKER_ROOT` from the
+ * environment to pick which broker to talk to. The extension can pass a
+ * per-call `brokerRoot` to `run()` (and the high-level wrappers) to point a
+ * specific call at a non-default broker — the sessions broker for
+ * cross-repo rendezvous, the per-repo broker for local-repo coordination.
+ *
  * JSON contracts (from ocaml/cli/c2c.ml, verified against the live binary):
  *   whoami --json     → { session_id, alias, ... }
  *   list --json       → [ { alias, session_id, alive, lastSeenAge? }, ... ]
@@ -60,6 +66,51 @@ export class C2cError extends Error {
     super(message);
     this.name = "C2cError";
   }
+}
+
+/**
+ * Resolve the sessions broker root — the cross-repo rendezvous broker used
+ * by Claude PostToolUse / kimi notifier, and by pi-c2c's cross-repo mode.
+ * Mirrors `C2c_repo_fp.resolve_sessions_broker_root` in
+ * `ocaml/c2c_repo_fp.ml` exactly so the extension and the CLI agree.
+ *
+ *   1. $C2C_SESSIONS_BROKER_ROOT (explicit override)
+ *   2. $XDG_STATE_HOME/sessions/broker
+ *   3. $HOME/.c2c/sessions/broker
+ */
+export function resolveSessionsBrokerRoot(
+  env: NodeJS.ProcessEnv = process.env,
+  homedir: string = process.env.HOME ?? "",
+  xdgStateHome: string = process.env.XDG_STATE_HOME ?? "",
+): string {
+  const explicit = (env.C2C_SESSIONS_BROKER_ROOT ?? "").trim();
+  if (explicit) return explicit;
+  if (xdgStateHome.trim()) return `${xdgStateHome.trim()}/sessions/broker`;
+  if (homedir) return `${homedir}/.c2c/sessions/broker`;
+  return ".c2c/sessions/broker";
+}
+
+/**
+ * Set C2C_MCP_BROKER_ROOT for the duration of a single c2c invocation.
+ * Returns a restore function. Threading the env var (rather than a CLI flag)
+ * is what the c2c CLI actually reads — there's no --broker-root flag.
+ */
+function setBrokerRootEnv(target: string | undefined): () => void {
+  const KEY = "C2C_MCP_BROKER_ROOT";
+  if (!target) {
+    // No override: leave the process-level env untouched so we don't
+    // clobber a value the user exported in their shell.
+    return () => {};
+  }
+  const previous = process.env[KEY];
+  process.env[KEY] = target;
+  return () => {
+    if (previous === undefined) {
+      delete process.env[KEY];
+    } else {
+      process.env[KEY] = previous;
+    }
+  };
 }
 
 // --- Pure parsers (unit-tested in isolation) --------------------------------
@@ -167,6 +218,13 @@ export interface C2cCliOptions {
   sessionId?: string;
   /** Per-invocation timeout in ms (default 15000). */
   timeoutMs?: number;
+  /**
+   * Default broker root (sets C2C_MCP_BROKER_ROOT for every invocation).
+   * Use to scope the client to a specific broker — the sessions broker for
+   * cross-repo rendezvous, or a custom shared broker. When unset, the
+   * process-level C2C_MCP_BROKER_ROOT (or the c2c CLI's default) wins.
+   */
+  brokerRoot?: string;
 }
 
 export class C2cCli {
@@ -174,63 +232,97 @@ export class C2cCli {
   private readonly bin: string;
   private readonly timeoutMs: number;
   sessionId?: string;
+  /** Default broker root for this client; set per-instance for cross-repo
+   *  sessions broker, etc. Cleared between calls if `run()` is given an
+   *  explicit `brokerRoot`. */
+  brokerRoot?: string;
 
   constructor(opts: C2cCliOptions) {
     this.exec = opts.exec;
     this.bin = opts.bin ?? process.env.C2C_BIN ?? "c2c";
     this.sessionId = opts.sessionId;
+    this.brokerRoot = opts.brokerRoot;
     this.timeoutMs = opts.timeoutMs ?? 15000;
   }
 
   /** Run a raw `c2c` invocation. Throws C2cError on non-zero exit. */
-  async run(args: string[], opts?: { signal?: AbortSignal }): Promise<ExecResultLike> {
-    const res = await this.exec(this.bin, args, { timeout: this.timeoutMs, signal: opts?.signal });
-    if (res.code !== 0) {
-      const detail = (res.stderr || res.stdout || "").trim();
-      throw new C2cError(`c2c ${args[0] ?? ""} failed (exit ${res.code}): ${detail}`, res.code, res.stderr);
+  async run(
+    args: string[],
+    opts?: { signal?: AbortSignal; brokerRoot?: string },
+  ): Promise<ExecResultLike> {
+    const target = opts?.brokerRoot ?? this.brokerRoot;
+    const restore = setBrokerRootEnv(target);
+    try {
+      const res = await this.exec(this.bin, args, {
+        timeout: this.timeoutMs,
+        signal: opts?.signal,
+      });
+      if (res.code !== 0) {
+        const detail = (res.stderr || res.stdout || "").trim();
+        throw new C2cError(
+          `c2c ${args[0] ?? ""} failed (exit ${res.code}): ${detail}`,
+          res.code,
+          res.stderr,
+        );
+      }
+      return res;
+    } finally {
+      restore();
     }
-    return res;
   }
 
   private withSession(args: string[]): string[] {
     return this.sessionId ? [...args, "--session-id", this.sessionId] : args;
   }
 
-  async whoami(): Promise<C2cWhoami | null> {
+  async whoami(opts?: { brokerRoot?: string }): Promise<C2cWhoami | null> {
     // `whoami` resolves identity from the C2C_MCP_SESSION_ID env var; it does
     // NOT accept --session-id (the CLI rejects it with exit 124).
-    const res = await this.run(["whoami", "--json"]);
+    const res = await this.run(["whoami", "--json"], { brokerRoot: opts?.brokerRoot });
     return parseWhoami(res.stdout);
   }
 
-  async list(): Promise<C2cPeer[]> {
-    const res = await this.run(["list", "--json"]);
+  async list(opts?: { brokerRoot?: string }): Promise<C2cPeer[]> {
+    const res = await this.run(["list", "--json"], { brokerRoot: opts?.brokerRoot });
     return parsePeers(res.stdout);
   }
 
   /** Register `alias` against `sessionId`, then scope this client to it. */
-  async register(alias: string, sessionId: string): Promise<C2cWhoami | null> {
-    const res = await this.run(["register", "--alias", alias, "--session-id", sessionId, "--json"]);
+  async register(
+    alias: string,
+    sessionId: string,
+    opts?: { brokerRoot?: string },
+  ): Promise<C2cWhoami | null> {
+    const res = await this.run(
+      ["register", "--alias", alias, "--session-id", sessionId, "--json"],
+      { brokerRoot: opts?.brokerRoot },
+    );
     this.sessionId = sessionId;
     return parseWhoami(res.stdout);
   }
 
   /** Drain (or peek) the inbox for the configured session. */
-  async pollInbox(opts?: { peek?: boolean; signal?: AbortSignal }): Promise<C2cMessage[]> {
+  async pollInbox(
+    opts?: { peek?: boolean; signal?: AbortSignal; brokerRoot?: string },
+  ): Promise<C2cMessage[]> {
     const args = this.withSession(["poll-inbox", "--json"]);
     if (opts?.peek) args.push("--peek");
-    const res = await this.run(args, { signal: opts?.signal });
+    const res = await this.run(args, { signal: opts?.signal, brokerRoot: opts?.brokerRoot });
     return parseMessages(res.stdout);
   }
 
   /** Send a DM to `target`. `from` overrides the sender alias when set
    * (normally identity is resolved from the C2C_MCP_SESSION_ID env). The `--`
    * separator guards against a target/body beginning with `-`. */
-  async send(target: string, body: string, opts?: { from?: string }): Promise<void> {
+  async send(
+    target: string,
+    body: string,
+    opts?: { from?: string; brokerRoot?: string },
+  ): Promise<void> {
     const args = ["send"];
     if (opts?.from) args.push("--from", opts.from);
     args.push("--", target, body);
-    await this.run(args);
+    await this.run(args, { brokerRoot: opts?.brokerRoot });
   }
 
   /** Broadcast to all peers. `from` overrides the sender alias when set. */

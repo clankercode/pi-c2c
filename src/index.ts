@@ -22,7 +22,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { C2cCli, type C2cMessage, type ExecFn } from "./c2c-cli.ts";
+import { C2cCli, type C2cMessage, type ExecFn, resolveSessionsBrokerRoot } from "./c2c-cli.ts";
 import { establishIdentity, type Identity } from "./identity.ts";
 import {
   DeliveryDedup,
@@ -138,6 +138,18 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   const dedup = new DeliveryDedup();
   const pollIntervalMs = readPollInterval();
 
+  // Cross-repo rendezvous: also register / list / send via the sessions
+  // broker (`~/.c2c/sessions/broker` by default) so pi sessions in different
+  // repos can see each other. Opt out with C2C_PI_CROSS_REPO=0.
+  const crossRepoEnabled = (process.env.C2C_PI_CROSS_REPO ?? "1") !== "0";
+  const sessionsBrokerRoot = crossRepoEnabled
+    ? resolveSessionsBrokerRoot()
+    : undefined;
+  // Track per-broker registration state so the debug output and the
+  // `c2c_list` / `c2c_send` tools can show what's wired up.
+  let crossRepoSessionsRegistered = false;
+  let crossRepoSessionsError: string | undefined;
+
   // Serialize drains so the background poller and a manual `c2c_poll_inbox`
   // tool never drain concurrently (which could split a batch).
   let drainChain: Promise<void> = Promise.resolve();
@@ -187,11 +199,22 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     const sid = identity.sessionId;
     await serializeDrain(async () => {
       if (shuttingDown) return;
-      let drained: C2cMessage[] = [];
+      // Poll both the per-repo broker and the sessions broker (when
+      // cross-repo is enabled). Messages may arrive in either; dedup
+      // collapses duplicates. A failing sessions broker should not
+      // break local delivery.
+      const drained: C2cMessage[] = [];
       try {
-        drained = await cli!.pollInbox();
+        drained.push(...(await cli!.pollInbox()));
       } catch {
-        return; // broker hiccup — retry next tick
+        // broker hiccup — retry next tick
+      }
+      if (sessionsBrokerRoot) {
+        try {
+          drained.push(...(await cli!.pollInbox({ brokerRoot: sessionsBrokerRoot })));
+        } catch {
+          // sessions broker hiccup — ignore, retry next tick
+        }
       }
       const combined = [...readSpool(SPOOL_DIR, sid), ...drained];
       const novel = filterNovel(combined, dedup);
@@ -270,6 +293,28 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       registerError = undefined;
       ctx.ui.setStatus(STATUS_KEY, formatStatus(identity.alias, true, ctx.ui.theme));
       ctx.ui.notify(`c2c: registered as ${identity.alias}`, "info");
+
+      // Cross-repo rendezvous: also register with the sessions broker so
+      // other pi sessions in different repos can see this one. Failure is
+      // non-fatal — most commonly hit is `alias_hijack_conflict` if another
+      // session in another repo already owns the same alias.
+      if (sessionsBrokerRoot) {
+        try {
+          const xsess = await cli!.register(identity.alias, identity.sessionId, {
+            brokerRoot: sessionsBrokerRoot,
+          });
+          crossRepoSessionsRegistered = xsess !== null;
+          if (!crossRepoSessionsRegistered) {
+            crossRepoSessionsError = "register returned no identity";
+          }
+        } catch (e: unknown) {
+          crossRepoSessionsError = e instanceof Error ? e.message : String(e);
+          // The most common cause is alias_hijack_conflict: another repo's
+          // pi session already owns this alias in the sessions broker.
+          // We don't fail the whole registration — the per-repo broker
+          // registration is still valid, and the local session is healthy.
+        }
+      }
     } else {
       const reason = res.error ?? "unknown error";
       barState.alias = identity.alias;
@@ -314,6 +359,8 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     ctx.ui.setStatus(STATUS_KEY, undefined);
     barState.alias = undefined;
     barState.registered = false;
+    crossRepoSessionsRegistered = false;
+    crossRepoSessionsError = undefined;
   });
 
   // --- helpers for tools/commands -------------------------------------------
@@ -348,6 +395,10 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         pid: process.pid,
         cwdFallback: process.cwd(),
         env: process.env,
+        crossRepoEnabled,
+        sessionsBrokerRoot,
+        crossRepoSessionsRegistered,
+        crossRepoSessionsError,
       });
       return toolText(text);
     },
@@ -356,7 +407,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_send",
     label: "c2c send",
-    description: "Send a c2c direct message to a peer agent by alias.",
+    description: "Send a c2c direct message to a peer agent by alias. Routes via the sessions broker first (cross-repo) then falls back to the per-repo broker.",
     parameters: Type.Object({
       target: Type.String({ description: "Recipient alias (e.g. 'lyra-quill') or session id." }),
       body: Type.String({ description: "Message body." }),
@@ -364,12 +415,31 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     async execute(_id, { target, body }) {
       const r = ready();
       if (!r) return toolText(notReadyText);
-      try {
-        await r.cli.send(target, body);
-        return toolText(`Sent to ${target}.`);
-      } catch (e) {
-        return toolText(`c2c_send failed: ${e instanceof Error ? e.message : String(e)}`);
+      // Try the cross-repo (sessions) broker first — it's the rendezvous
+      // point for pi sessions in other repos, and most local peers are
+      // also registered there. Fall back to the per-repo broker if the
+      // sessions broker doesn't know the alias (e.g. legacy non-pi peers).
+      const targets: Array<{ root?: string; via: string }> = [];
+      if (sessionsBrokerRoot) targets.push({ root: sessionsBrokerRoot, via: "sessions" });
+      targets.push({ root: undefined, via: "per-repo" });
+      let lastErr: unknown = null;
+      for (const t of targets) {
+        try {
+          await r.cli.send(target, body, { brokerRoot: t.root });
+          return toolText(`Sent to ${target} (via ${t.via}).`);
+        } catch (e: unknown) {
+          lastErr = e;
+          const msg = e instanceof Error ? e.message : String(e);
+          // If the error says "not registered", try the next broker.
+          // Otherwise surface the error immediately.
+          if (!/not[_ ]?registered|unknown[_ ]?alias|alias[_ ]?not[_ ]?found/i.test(msg)) {
+            return toolText(`c2c_send failed (${t.via}): ${msg}`);
+          }
+        }
       }
+      return toolText(
+        `c2c_send failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
+      );
     },
   });
 
@@ -398,15 +468,43 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_list",
     label: "c2c peers",
-    description: "List registered c2c peers and their liveness.",
+    description: "List registered c2c peers and their liveness. Merges per-repo and cross-repo (sessions broker) peers when cross-repo is enabled.",
     parameters: Type.Object({}),
     async execute() {
       const r = ready();
       if (!r) return toolText(notReadyText);
       try {
-        const peers = await r.cli.list();
-        if (peers.length === 0) return toolText("No peers registered.");
-        const lines = peers.map((p) => `${p.alive ? "●" : "○"} ${p.alias}`);
+        // Per-repo broker list (always)
+        const localPeers = await r.cli.list();
+        // Cross-repo / sessions broker list (when enabled)
+        const remotePeers = sessionsBrokerRoot
+          ? await r.cli.list({ brokerRoot: sessionsBrokerRoot }).catch(() => [])
+          : [];
+        // Merge + dedup by session_id (prefer the live entry). Tag with
+        // [local] / [cross] so the user can see which broker they came
+        // from. This is a key UX win for cross-repo visibility.
+        const bySid = new Map<string, { alias: string; alive: boolean; tag: "local" | "cross" }>();
+        for (const p of localPeers) {
+          bySid.set(p.session_id, { alias: p.alias, alive: p.alive, tag: "local" });
+        }
+        for (const p of remotePeers) {
+          const existing = bySid.get(p.session_id);
+          if (!existing) {
+            bySid.set(p.session_id, { alias: p.alias, alive: p.alive, tag: "cross" });
+          } else if (!existing.alive && p.alive) {
+            // Prefer the live one and keep its tag.
+            bySid.set(p.session_id, { alias: p.alias, alive: p.alive, tag: existing.tag });
+          }
+        }
+        // Sort: live first, then by alias
+        const merged = Array.from(bySid.values()).sort((a, b) => {
+          if (a.alive !== b.alive) return a.alive ? -1 : 1;
+          return a.alias.localeCompare(b.alias);
+        });
+        if (merged.length === 0) return toolText("No peers registered.");
+        const lines = merged.map(
+          (p) => `${p.alive ? "●" : "○"} ${p.alias}${p.tag === "cross" ? "  [cross-repo]" : ""}`,
+        );
         return toolText(lines.join("\n"));
       } catch (e) {
         return toolText(`c2c_list failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -549,6 +647,10 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         pid: process.pid,
         cwdFallback: process.cwd(),
         env: process.env,
+        crossRepoEnabled,
+        sessionsBrokerRoot,
+        crossRepoSessionsRegistered,
+        crossRepoSessionsError,
       });
       ctx.ui.notify(formatDebugTable(raw), "info");
     },

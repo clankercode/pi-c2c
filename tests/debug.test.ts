@@ -25,6 +25,10 @@ const BASE_STATE = {
   pid: 9999,
   cwdFallback: "/fallback",
   env: { C2C_MCP_BROKER_ROOT: "/mock/broker" },
+  crossRepoEnabled: false,
+  sessionsBrokerRoot: undefined,
+  crossRepoSessionsRegistered: false,
+  crossRepoSessionsError: undefined,
 };
 
 test("collectDebugState formats all fields when registered and healthy", () => {
@@ -144,4 +148,36 @@ test("collectDebugProblems: unregistered with identity produces one error", () =
 test("collectDebugProblems: null identity is an error", () => {
   const problems = collectDebugProblems({ ...BASE_STATE, identity: null });
   assert.ok(problems.some((p) => p.severity === "error" && p.field === "identity"));
+});
+
+test("collectDebugState: surfaces cross-repo fields when enabled", () => {
+  const out = collectDebugState({
+    ...BASE_STATE,
+    crossRepoEnabled: true,
+    sessionsBrokerRoot: "/home/x/.c2c/sessions/broker",
+    crossRepoSessionsRegistered: true,
+  });
+  assert.ok(out.includes("crossRepoEnabled: true"));
+  assert.ok(out.includes("sessionsBrokerRoot: /home/x/.c2c/sessions/broker"));
+  assert.ok(out.includes("crossRepoSessionsRegistered: true"));
+  assert.ok(out.includes("crossRepoSessionsError: (none)"));
+});
+
+test("collectDebugState: surfaces cross-repo error as a warning problem", () => {
+  const out = collectDebugState({
+    ...BASE_STATE,
+    crossRepoEnabled: true,
+    sessionsBrokerRoot: "/home/x/.c2c/sessions/broker",
+    crossRepoSessionsRegistered: false,
+    crossRepoSessionsError: "alias_hijack_conflict",
+  });
+  assert.ok(out.includes("crossRepoSessionsRegistered: false"));
+  assert.ok(out.includes("alias_hijack_conflict"));
+  assert.ok(out.includes("[warning] crossRepo:"));
+});
+
+test("collectDebugState: cross-repo disabled leaves default fields", () => {
+  const out = collectDebugState(BASE_STATE);
+  assert.ok(out.includes("crossRepoEnabled: false"));
+  assert.ok(out.includes("sessionsBrokerRoot: (disabled)"));
 });
