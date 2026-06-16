@@ -27,3 +27,21 @@ A native pi extension making a pi session a first-class c2c peer
 - Key API facts captured (see AGENTS.md): tool params use `typebox` (unscoped),
   `pi.sendMessage(..., {deliverAs})` is the auto-delivery primitive, `pi.exec` for CLI.
 - Gate: `tsc --noEmit` — see below.
+
+### S2 — Identity
+- `identity.ts`: `deriveSessionId` (namespace `pi-`), `resolveAlias` (configured | `pi-<sha6>`),
+  `computeIdentity`, `establishIdentity` (best-effort register; never throws). 26 tests, tsc clean.
+
+### S4 (core) — Delivery (pure)
+- `delivery.ts`: `formatEnvelope` (parity with OpenCode plugin envelope incl. `reply_via="c2c_send"`),
+  `messageKey` (NUL-separated), `DeliveryDedup` (bounded LRU), `selectNovel`, `deliveryOptionsFor`
+  (idle→triggerTurn, busy→followUp), `notifySummary`. 35 tests total, tsc clean.
+- Caught + cleaned stray NUL bytes from a tool-serialization quirk; scanned all files (src clean).
+
+### S3 + S4 (wiring) — index.ts
+- Tools: c2c_send, c2c_send_all, c2c_list, c2c_poll_inbox, c2c_whoami, c2c_join_room,
+  c2c_send_room, c2c_rooms. Slash: /c2c-status, -whoami, -peers, -inbox, -send.
+- Poller: setInterval(pollIntervalMs, default 30s), serialized drains (mutex shared with manual
+  poll tool), idle-aware injection via pi.sendMessage. session_shutdown clears timer.
+- CLI extended with room methods + parseRoomList. 40 tests total, tsc clean.
+- Command handler `args` is a STRING (not array) — fixed /c2c-send to regex-parse.

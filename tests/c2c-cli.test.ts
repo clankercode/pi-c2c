@@ -6,6 +6,7 @@ import {
   parseMessages,
   parsePeers,
   parseWhoami,
+  parseRoomList,
   type ExecFn,
   type ExecResultLike,
 } from "../src/c2c-cli.ts";
@@ -161,4 +162,45 @@ test("bin override is honored", async () => {
   const { exec, calls } = fakeExec({ stdout: "[]" });
   await new C2cCli({ exec, bin: "/custom/c2c" }).list();
   assert.equal(calls[0].command, "/custom/c2c");
+});
+
+// --- rooms ------------------------------------------------------------------
+
+test("parseRoomList: string array, object array, and mixed/garbage", () => {
+  assert.deepEqual(parseRoomList('["swarm-lounge","ops"]'), ["swarm-lounge", "ops"]);
+  assert.deepEqual(parseRoomList('[{"room":"a"},{"name":"b"},{"id":"c"}]'), ["a", "b", "c"]);
+  assert.deepEqual(parseRoomList('[{"room":"a"},null,5,{"nope":"x"}]'), ["a"]);
+  assert.deepEqual(parseRoomList("not json"), []);
+  assert.deepEqual(parseRoomList("{}"), []);
+});
+
+test("joinRoom / leaveRoom build correct args", async () => {
+  const j = fakeExec({});
+  await new C2cCli({ exec: j.exec }).joinRoom("swarm-lounge", "pi-x");
+  assert.deepEqual(j.calls[0].args, ["rooms", "join", "--alias", "pi-x", "swarm-lounge"]);
+
+  const l = fakeExec({});
+  await new C2cCli({ exec: l.exec }).leaveRoom("swarm-lounge", "pi-x");
+  assert.deepEqual(l.calls[0].args, ["rooms", "leave", "--alias", "pi-x", "swarm-lounge"]);
+});
+
+test("sendRoom builds --from + room + body", async () => {
+  const { exec, calls } = fakeExec({});
+  await new C2cCli({ exec }).sendRoom("ops", "deploy done", "pi-x");
+  assert.deepEqual(calls[0].args, ["rooms", "send", "--from", "pi-x", "ops", "deploy done"]);
+});
+
+test("myRooms parses room ids", async () => {
+  const { exec, calls } = fakeExec({ stdout: '["swarm-lounge","ops"]' });
+  const rooms = await new C2cCli({ exec }).myRooms();
+  assert.deepEqual(rooms, ["swarm-lounge", "ops"]);
+  assert.deepEqual(calls[0].args, ["rooms", "my-rooms", "--json"]);
+});
+
+test("roomHistory builds args + parses messages", async () => {
+  const msgs = [{ from_alias: "storm", to_alias: "ops", content: "hi", ts: 1 }];
+  const { exec, calls } = fakeExec({ stdout: JSON.stringify(msgs) });
+  const got = await new C2cCli({ exec }).roomHistory("ops", 10);
+  assert.equal(got.length, 1);
+  assert.deepEqual(calls[0].args, ["rooms", "history", "--json", "--limit", "10", "ops"]);
 });

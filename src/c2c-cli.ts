@@ -116,6 +116,31 @@ export function parsePeers(stdout: string): C2cPeer[] {
   return out;
 }
 
+/** Parse `rooms my-rooms --json` into a list of room ids. Tolerant of either
+ * a bare string array or an array of objects keyed `room`/`name`/`id`. */
+export function parseRoomList(stdout: string): string[] {
+  let data: unknown;
+  try {
+    data = JSON.parse(stdout);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(data)) return [];
+  const out: string[] = [];
+  for (const raw of data) {
+    if (typeof raw === "string") {
+      if (raw) out.push(raw);
+      continue;
+    }
+    if (raw && typeof raw === "object") {
+      const r = raw as Record<string, unknown>;
+      const id = r.room ?? r.name ?? r.id;
+      if (typeof id === "string" && id) out.push(id);
+    }
+  }
+  return out;
+}
+
 /** Parse `whoami --json` output into an identity, or null if unusable. */
 export function parseWhoami(stdout: string): C2cWhoami | null {
   let data: unknown;
@@ -209,5 +234,34 @@ export class C2cCli {
     if (opts?.exclude?.length) args.push("--exclude", opts.exclude.join(","));
     args.push(body);
     await this.run(args);
+  }
+
+  // --- rooms ----------------------------------------------------------------
+
+  /** Join a room as `alias`. */
+  async joinRoom(room: string, alias: string): Promise<void> {
+    await this.run(["rooms", "join", "--alias", alias, room]);
+  }
+
+  /** Leave a room as `alias`. */
+  async leaveRoom(room: string, alias: string): Promise<void> {
+    await this.run(["rooms", "leave", "--alias", alias, room]);
+  }
+
+  /** Send a message to a room as `from`. */
+  async sendRoom(room: string, body: string, from: string): Promise<void> {
+    await this.run(["rooms", "send", "--from", from, room, body]);
+  }
+
+  /** List the rooms this session is a member of. */
+  async myRooms(): Promise<string[]> {
+    const res = await this.run(["rooms", "my-rooms", "--json"]);
+    return parseRoomList(res.stdout);
+  }
+
+  /** Fetch recent room history. */
+  async roomHistory(room: string, limit = 50): Promise<C2cMessage[]> {
+    const res = await this.run(["rooms", "history", "--json", "--limit", String(limit), room]);
+    return parseMessages(res.stdout);
   }
 }
