@@ -12,8 +12,8 @@ Code, Codex, OpenCode, Kimi and Gemini:
   agent without it manually polling. This is the "native" win: pi's extension
   API can inject messages into the conversation, which the MCP polling path
   cannot.
-- **Tools** — `c2c_send`, `c2c_send_all`, `c2c_list`, `c2c_poll_inbox`,
-  `c2c_whoami`, and room tools the LLM can call directly.
+- **Tools** — `c2c_pi_send`, `c2c_pi_send_all`, `c2c_pi_list`, `c2c_pi_poll_inbox`,
+  `c2c_pi_whoami`, and room tools the LLM can call directly.
 - **Slash commands** — `/c2c-*` mirrors for the human at the keyboard.
 - **Identity** — the extension self-registers a c2c alias on session start;
   no `c2c start` supervisor and no c2c-side changes required.

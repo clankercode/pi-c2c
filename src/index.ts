@@ -165,7 +165,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   // peer (idle/processing/tool/input) without surfacing the raw status
   // envelope to the LLM or the human chat. Inbound status messages are
   // filtered out in `pollTick` before delivery; the recorded state is
-  // surfaced via `c2c_list` and `/c2c-pi-debug`.
+  // surfaced via `c2c_pi_list` and `/c2c-pi-debug`.
   const peerStatusStore = new PeerStatusStore();
 
   // Cross-repo rendezvous: also register / list / send via the sessions
@@ -176,11 +176,11 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     ? resolveSessionsBrokerRoot()
     : undefined;
   // Track per-broker registration state so the debug output and the
-  // `c2c_list` / `c2c_send` tools can show what's wired up.
+  // `c2c_pi_list` / `c2c_pi_send` tools can show what's wired up.
   let crossRepoSessionsRegistered = false;
   let crossRepoSessionsError: string | undefined;
 
-  // Serialize drains so the background poller and a manual `c2c_poll_inbox`
+  // Serialize drains so the background poller and a manual `c2c_pi_poll_inbox`
   // tool never drain concurrently (which could split a batch).
   let drainChain: Promise<void> = Promise.resolve();
   function serializeDrain<T>(fn: () => Promise<T>): Promise<T> {
@@ -254,7 +254,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       // status envelope is recorded in `peerStatusStore` and dropped from
       // delivery. The LLM never sees them; the human chat never sees them
       // as a "new message" notification. They live on as a per-peer state
-      // that `c2c_list` and `/c2c-pi-debug` can surface.
+      // that `c2c_pi_list` and `/c2c-pi-debug` can surface.
       const { messages: deliverable } = extractStatusMessages(drained, peerStatusStore);
       const combined = [...readSpool(SPOOL_DIR, sid), ...deliverable];
       const novel = filterNovel(combined, dedup);
@@ -507,7 +507,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "c2c_send",
+    name: "c2c_pi_send",
     label: "c2c send",
     description: "Send a c2c direct message to a peer agent by alias. Routes via the sessions broker first (cross-repo) then falls back to the per-repo broker.",
     parameters: Type.Object({
@@ -537,12 +537,12 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           // If the error says "not registered", try the next broker.
           // Otherwise surface the error immediately.
           if (!/not[_ ]?registered|unknown[_ ]?alias|alias[_ ]?not[_ ]?found/i.test(msg)) {
-            return toolText(`c2c_send failed (${t.via}): ${msg}`, details);
+            return toolText(`c2c_pi_send failed (${t.via}): ${msg}`, details);
           }
         }
       }
       return toolText(
-        `c2c_send failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
+        `c2c_pi_send failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
         details,
       );
     },
@@ -556,7 +556,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "c2c_send_all",
+    name: "c2c_pi_send_all",
     label: "c2c broadcast",
     description: "Broadcast a c2c message to all registered peers.",
     parameters: Type.Object({
@@ -574,7 +574,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         await r.cli.sendAll(body, { exclude });
         return toolText("Broadcast sent.", details);
       } catch (e) {
-        return toolText(`c2c_send_all failed: ${e instanceof Error ? e.message : String(e)}`, details);
+        return toolText(`c2c_pi_send_all failed: ${e instanceof Error ? e.message : String(e)}`, details);
       }
     },
     renderCall: (_args, theme) => renderSendCall({ kind: "broadcast" }, theme),
@@ -587,7 +587,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "c2c_list",
+    name: "c2c_pi_list",
     label: "c2c peers",
     description: "List registered c2c peers and their liveness. Merges per-repo and cross-repo (sessions broker) peers when cross-repo is enabled. Each peer is annotated with their last known status (idle/processing/tool/input) when available.",
     parameters: Type.Object({}),
@@ -645,7 +645,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         });
         return toolText(lines.join("\n"), details);
       } catch (e) {
-        return toolText(`c2c_list failed: ${e instanceof Error ? e.message : String(e)}`, { peers: [] } as ListToolDetails);
+        return toolText(`c2c_pi_list failed: ${e instanceof Error ? e.message : String(e)}`, { peers: [] } as ListToolDetails);
       }
     },
     renderResult: (result, _options, theme, context) =>
@@ -653,7 +653,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "c2c_poll_inbox",
+    name: "c2c_pi_poll_inbox",
     label: "c2c inbox",
     description: "Drain and return any queued inbound c2c messages now.",
     parameters: Type.Object({}),
@@ -684,7 +684,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         });
         return toolText(text, { messages } as InboxToolDetails);
       } catch (e) {
-        return toolText(`c2c_poll_inbox failed: ${e instanceof Error ? e.message : String(e)}`, { messages: [] } as InboxToolDetails);
+        return toolText(`c2c_pi_poll_inbox failed: ${e instanceof Error ? e.message : String(e)}`, { messages: [] } as InboxToolDetails);
       }
     },
     renderResult: (result, _options, theme, context) =>
@@ -692,7 +692,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "c2c_whoami",
+    name: "c2c_pi_whoami",
     label: "c2c whoami",
     description: "Show this session's c2c identity (alias + session id).",
     parameters: Type.Object({}),
@@ -714,7 +714,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "c2c_status",
+    name: "c2c_pi_status",
     label: "c2c status",
     description: "Show this session's current c2c runtime status (idle/processing/tool/input).",
     parameters: Type.Object({}),
@@ -728,7 +728,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "c2c_join_room",
+    name: "c2c_pi_join_room",
     label: "c2c join room",
     description: "Join a c2c room (N:N channel). Room messages auto-deliver to your transcript.",
     parameters: Type.Object({ room: Type.String({ description: "Room id (e.g. 'swarm-lounge')." }) }),
@@ -741,7 +741,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         await r.cli.joinRoom(room, r.identity.alias);
         return toolText(`Joined room ${room}.`, details);
       } catch (e) {
-        return toolText(`c2c_join_room failed: ${e instanceof Error ? e.message : String(e)}`, details);
+        return toolText(`c2c_pi_join_room failed: ${e instanceof Error ? e.message : String(e)}`, details);
       }
     },
     renderResult: (result, _options, theme, context) =>
@@ -753,7 +753,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "c2c_send_room",
+    name: "c2c_pi_send_room",
     label: "c2c room send",
     description: "Send a message to a c2c room you have joined.",
     parameters: Type.Object({
@@ -769,7 +769,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         await r.cli.sendRoom(room, body);
         return toolText(`Sent to room ${room}.`, details);
       } catch (e) {
-        return toolText(`c2c_send_room failed: ${e instanceof Error ? e.message : String(e)}`, details);
+        return toolText(`c2c_pi_send_room failed: ${e instanceof Error ? e.message : String(e)}`, details);
       }
     },
     renderCall: (args, theme) => renderSendCall({ kind: "room", room: (args as { room: string }).room }, theme),
@@ -782,7 +782,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "c2c_rooms",
+    name: "c2c_pi_rooms",
     label: "c2c rooms",
     description: "List the c2c rooms this session is a member of.",
     parameters: Type.Object({}),
@@ -795,7 +795,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         const details: RoomsToolDetails = { rooms };
         return toolText(rooms.length ? rooms.join("\n") : "(no rooms joined)", details);
       } catch (e) {
-        return toolText(`c2c_rooms failed: ${e instanceof Error ? e.message : String(e)}`, { rooms: [] } as RoomsToolDetails);
+        return toolText(`c2c_pi_rooms failed: ${e instanceof Error ? e.message : String(e)}`, { rooms: [] } as RoomsToolDetails);
       }
     },
     renderResult: (result, _options, theme, context) =>

@@ -2,7 +2,7 @@
  * Unit tests for the peer status store and status-message filter.
  *
  * Status envelopes arrive as c2c messages; we want to record them in the
- * store, drop them from delivery, and let `c2c_list` show the recorded state
+ * store, drop them from delivery, and let `c2c_pi_list` show the recorded state
  * next to each peer. The LLM and the human chat history should never see
  * status envelopes.
  */

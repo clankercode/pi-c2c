@@ -34,7 +34,7 @@ function makeMessage(
 }
 
 function envelope(from: string, body: string): string {
-  return `<c2c event="message" from="${from}" to="me" source="broker" reply_via="c2c_send" action_after="continue">\n${body}\n</c2c>`;
+  return `<c2c event="message" from="${from}" to="me" source="broker" reply_via="c2c_pi_send" action_after="continue">\n${body}\n</c2c>`;
 }
 
 function statusEnvelope(from: string, state: string): string {
@@ -71,7 +71,7 @@ describe("parseC2cEnvelopes", () => {
   });
 
   it("unwraps status envelopes delivered inside message envelopes", () => {
-    const wrapped = `<c2c event="message" from="lyra-quill" to="me" source="broker" reply_via="c2c_send" action_after="continue">\n${statusEnvelope("lyra-quill", "processing")}\n</c2c>`;
+    const wrapped = `<c2c event="message" from="lyra-quill" to="me" source="broker" reply_via="c2c_pi_send" action_after="continue">\n${statusEnvelope("lyra-quill", "processing")}\n</c2c>`;
     const parsed = parseC2cEnvelopes(wrapped);
     assert.strictEqual(parsed.length, 1);
     assert.strictEqual(parsed[0].event, "status");

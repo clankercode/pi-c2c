@@ -24,7 +24,7 @@ test("formatEnvelope: parity shape with the OpenCode plugin", () => {
   const env = formatEnvelope(mk({ content: "ping" }));
   assert.equal(
     env,
-    '<c2c event="message" from="storm" to="pi-abc" source="broker" reply_via="c2c_send" action_after="continue">\nping\n</c2c>',
+    '<c2c event="message" from="storm" to="pi-abc" source="broker" reply_via="c2c_pi_send" action_after="continue">\nping\n</c2c>',
   );
 });
 

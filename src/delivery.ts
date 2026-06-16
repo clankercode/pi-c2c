@@ -36,7 +36,7 @@ export function sanitizeContent(content: string): string {
 
 /**
  * Render a single message as a c2c envelope for injection. Identical shape to
- * the OpenCode plugin's `formatEnvelope` (including `reply_via="c2c_send"`,
+ * the OpenCode plugin's `formatEnvelope` (including `reply_via="c2c_pi_send"`,
  * which is this extension's send-tool name). Peer content is sanitized so it
  * cannot break out of or forge the envelope.
  */
@@ -45,7 +45,7 @@ export function formatEnvelope(msg: C2cMessage, selfAlias?: string): string {
   const to = msg.to_alias || selfAlias || "me";
   return (
     `<c2c event="message" from="${from}" to="${to}" source="broker" ` +
-    `reply_via="c2c_send" action_after="continue">\n${sanitizeContent(msg.content)}\n</c2c>`
+    `reply_via="c2c_pi_send" action_after="continue">\n${sanitizeContent(msg.content)}\n</c2c>`
   );
 }
 

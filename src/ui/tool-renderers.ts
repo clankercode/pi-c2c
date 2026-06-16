@@ -63,7 +63,7 @@ function peerIndicator(alive: boolean, theme: Theme): string {
   return alive ? theme.fg("success", "●") : theme.fg("muted", "○");
 }
 
-// ── Send tools (c2c_send, c2c_send_all, c2c_send_room) ───────────────────────
+// ── Send tools (c2c_pi_send, c2c_pi_send_all, c2c_pi_send_room) ───────────────────────
 
 /**
  * One-line preview shown while a send tool is executing.
@@ -113,10 +113,10 @@ export function renderSendResult(details: SendToolDetails, isError: boolean, the
   return new Text(parts.join(""), 0, 0);
 }
 
-// ── c2c_list ─────────────────────────────────────────────────────────────────
+// ── c2c_pi_list ─────────────────────────────────────────────────────────────────
 
 /**
- * Result for c2c_list.
+ * Result for c2c_pi_list.
  *   ◈ c2c · peers (3)
  *      ● alias-one
  *      ● alias-two  [cross-repo]
@@ -172,10 +172,10 @@ function statusColor(state: string): import("@earendil-works/pi-coding-agent").T
   }
 }
 
-// ── c2c_poll_inbox ───────────────────────────────────────────────────────────
+// ── c2c_pi_poll_inbox ───────────────────────────────────────────────────────────
 
 /**
- * Result for c2c_poll_inbox.
+ * Result for c2c_pi_poll_inbox.
  *   ◈ c2c · inbox (2)
  *      lyra-quill: preview...
  *      other: preview...
@@ -214,10 +214,10 @@ export function renderInboxResult(
   return container;
 }
 
-// ── c2c_whoami ───────────────────────────────────────────────────────────────
+// ── c2c_pi_whoami ───────────────────────────────────────────────────────────────
 
 /**
- * Result for c2c_whoami.
+ * Result for c2c_pi_whoami.
  *   ◈ c2c · alias (session-id) · registered
  */
 export function renderWhoamiResult(
@@ -244,10 +244,10 @@ export function renderWhoamiResult(
   return new Text(line, 0, 0);
 }
 
-// ── c2c_join_room ────────────────────────────────────────────────────────────
+// ── c2c_pi_join_room ────────────────────────────────────────────────────────────
 
 /**
- * Result for c2c_join_room.
+ * Result for c2c_pi_join_room.
  *   ◈ c2c · joined room swarm-lounge
  */
 export function renderJoinRoomResult(
@@ -269,10 +269,10 @@ export function renderJoinRoomResult(
   return new Text(line, 0, 0);
 }
 
-// ── c2c_rooms ────────────────────────────────────────────────────────────────
+// ── c2c_pi_rooms ────────────────────────────────────────────────────────────────
 
 /**
- * Result for c2c_rooms.
+ * Result for c2c_pi_rooms.
  *   ◈ c2c · rooms (2)
  *      swarm-lounge
  *      ops
