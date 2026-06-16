@@ -68,3 +68,15 @@ Validated end-to-end in the wild (C2C_MCP_BROKER_ROOT=/tmp isolated; shared swar
 - CLI-contract checks (against real binary): send-via-env, `--` separator (leading-dash body verbatim), whoami-via-env, rooms join `--`/my-rooms-via-env, `list` fields `[alias,alive,pid,registered_at,session_id]` — all pass.
 
 Result: pi is a working first-class c2c peer. Auto-delivery into the transcript — the native win Claude Code's MCP path can't do — works.
+
+### Review round 2 (focused re-review of post-fix delivery/spool/env code)
+- 10 findings, 6 confirmed, 4 refuted. Root cluster: in-process session switch (reload/new/resume/fork re-invokes the extension).
+- Fixes:
+  - **MAJOR env self-clobber**: on a session switch the extension read its OWN prior `C2C_MCP_SESSION_ID` write as the "host" value, pinning identity to the stale session. Fix: capture the true host env ONCE in process-global (`globalThis`) state before any write; derive from it (not live `process.env`).
+  - Spool orphaning on switch (minor): carry the previous session's undelivered spool to the new id (process-local, never steals another live pi process's spool); GC spool files >7 days old to bound accumulation (safe across concurrent processes).
+  - Mark-before-render (minor): `/c2c-inbox` + `c2c_poll_inbox` now render/notify INSIDE the drain mutex BEFORE markDelivered+clearSpool, so a render/notify failure keeps messages spool-eligible.
+- Refuted (4): process.env "leak" (intended — children need it), per-process restart re-deliver (documented at-least-once tradeoff).
+- Gate: 56 tests, tsc clean. Re-dogfood smoke: register + auto-delivery confirmed on the round-2 build.
+
+## Status: COMPLETE
+pi-c2c is a working first-class c2c peer. All blocker/major findings from both review rounds fixed and validated in the wild. v1 deferred (non-blocking): `c2c install pi` binary embedding, word-pair aliases, deeper room parity.

@@ -64,3 +64,33 @@ export function clearSpool(dir: string, sessionId: string): void {
     // Already absent — fine.
   }
 }
+
+/**
+ * Garbage-collect spool files older than `maxAgeMs` (by mtime). A week-old
+ * spool belongs to a session that will never start again, so removing it is
+ * safe even when multiple pi processes share this directory — we only touch
+ * files no live session would still be writing. Best-effort; returns the count
+ * removed. (We deliberately do NOT reap recent files: another live pi process
+ * may own them.)
+ */
+export function gcStaleSpools(dir: string, maxAgeMs: number, nowMs: number): number {
+  let removed = 0;
+  try {
+    for (const entry of fs.readdirSync(dir)) {
+      if (!entry.endsWith(".spool.json")) continue;
+      const full = path.join(dir, entry);
+      try {
+        const age = nowMs - fs.statSync(full).mtimeMs;
+        if (age > maxAgeMs) {
+          fs.unlinkSync(full);
+          removed++;
+        }
+      } catch {
+        // racing unlink / stat error — skip
+      }
+    }
+  } catch {
+    // dir missing — nothing to GC
+  }
+  return removed;
+}

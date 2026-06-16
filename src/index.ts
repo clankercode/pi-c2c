@@ -32,7 +32,7 @@ import {
   markDelivered,
   notifySummary,
 } from "./delivery.ts";
-import { clearSpool, readSpool, writeSpool } from "./spool.ts";
+import { clearSpool, gcStaleSpools, readSpool, writeSpool } from "./spool.ts";
 
 export const PI_C2C_VERSION = "0.1.0";
 
@@ -40,6 +40,29 @@ const STATUS_KEY = "c2c";
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const SESSION_ENV = "C2C_MCP_SESSION_ID";
 const SPOOL_DIR = path.join(os.homedir(), ".pi", "c2c");
+const SPOOL_TTL_MS = 7 * 24 * 60 * 60 * 1000; // GC spool files older than a week
+
+/**
+ * Process-global state that must survive the extension factory being
+ * re-invoked on an in-process session switch (reload / new / resume / fork).
+ * pi re-evaluates the extension module on each switch, so a fresh closure /
+ * fresh `process.env` read cannot tell our own prior `C2C_MCP_SESSION_ID`
+ * write apart from a value the host set before launch. We stash the true
+ * host-provided value (captured before our first write) and the previous
+ * session id (to migrate its spool) on globalThis instead.
+ */
+interface PiC2cGlobal {
+  hostSessionEnvCaptured: boolean;
+  hostSessionEnv: string | undefined;
+  prevSessionId?: string;
+}
+function gstate(): PiC2cGlobal {
+  const g = globalThis as { __c2cPiState?: PiC2cGlobal };
+  if (!g.__c2cPiState) {
+    g.__c2cPiState = { hostSessionEnvCaptured: false, hostSessionEnv: undefined };
+  }
+  return g.__c2cPiState;
+}
 
 /** A pi tool/command result is a list of text blocks plus opaque details. */
 function toolText(text: string) {
@@ -145,6 +168,15 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     ctxRef = ctx;
     shuttingDown = false;
+    const gs = gstate();
+    // Capture the host-provided session id ONCE, before our first write can
+    // pollute it — otherwise a session switch would read our own prior write
+    // and pin identity to the stale session.
+    if (!gs.hostSessionEnvCaptured) {
+      gs.hostSessionEnv = process.env[SESSION_ENV];
+      gs.hostSessionEnvCaptured = true;
+    }
+
     const exec: ExecFn = (command, args, options) =>
       pi.exec(command, args, { ...options, cwd: ctx.cwd });
     cli = new C2cCli({ exec });
@@ -153,7 +185,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     const res = await establishIdentity(cli, {
       piSessionId,
       configuredAlias: process.env.C2C_PI_ALIAS,
-      sessionIdEnv: process.env[SESSION_ENV],
+      sessionIdEnv: gs.hostSessionEnv,
     });
     identity = res.identity;
     registered = res.ok;
@@ -163,6 +195,23 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     // accepts our sends, and whoami/rooms resolve the right identity.
     // (pi's exec options carry no env field, so we set it on the process.)
     process.env[SESSION_ENV] = identity.sessionId;
+
+    // On an in-process session switch our id changes; carry the previous
+    // session's undelivered spool over to the new one (process-local, so we
+    // never steal another live pi process's spool), then bound accumulation
+    // by GC-ing week-old spool files (safe across concurrent pi processes).
+    if (gs.prevSessionId && gs.prevSessionId !== identity.sessionId) {
+      const carried = readSpool(SPOOL_DIR, gs.prevSessionId);
+      if (carried.length > 0) {
+        writeSpool(SPOOL_DIR, identity.sessionId, [
+          ...readSpool(SPOOL_DIR, identity.sessionId),
+          ...carried,
+        ]);
+      }
+      clearSpool(SPOOL_DIR, gs.prevSessionId);
+    }
+    gs.prevSessionId = identity.sessionId;
+    gcStaleSpools(SPOOL_DIR, SPOOL_TTL_MS, Date.now());
 
     if (res.ok) {
       ctx.ui.setStatus(STATUS_KEY, identity.alias);
@@ -287,19 +336,23 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       if (!r) return toolText(notReadyText);
       const sid = r.identity.sessionId;
       try {
-        // Returning the messages in the tool result IS the delivery, so we can
-        // mark them delivered + clear the spool synchronously here (no async
-        // inject gap). Replay the spool too so a manual poll surfaces anything
-        // a prior background tick drained but failed to inject.
-        const novel = await serializeDrain(async () => {
+        // Render the result BEFORE committing (markDelivered + clearSpool),
+        // all inside the mutex: if formatting throws, the messages stay in the
+        // broker-drained spool and remain eligible for redelivery. Replay the
+        // spool too so a manual poll surfaces anything a prior background tick
+        // drained but failed to inject.
+        const text = await serializeDrain(async () => {
           const combined = [...readSpool(SPOOL_DIR, sid), ...(await r.cli.pollInbox())];
           const fresh = filterNovel(combined, dedup);
+          const rendered =
+            fresh.length === 0
+              ? "(no messages)"
+              : fresh.map((m) => formatEnvelope(m, r.identity.alias)).join("\n\n");
           markDelivered(fresh, dedup);
           clearSpool(SPOOL_DIR, sid);
-          return fresh;
+          return rendered;
         });
-        if (novel.length === 0) return toolText("(no messages)");
-        return toolText(novel.map((m) => formatEnvelope(m, r.identity.alias)).join("\n\n"));
+        return toolText(text);
       } catch (e) {
         return toolText(`c2c_poll_inbox failed: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -425,17 +478,19 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       if (!r) return ctx.ui.notify(notReadyText, "warning");
       const sid = r.identity.sessionId;
       try {
-        const novel = await serializeDrain(async () => {
+        // notify() IS the delivery here, so do it INSIDE the mutex before the
+        // commit (markDelivered + clearSpool). If notify throws, we bail before
+        // committing and the spool keeps the messages for redelivery.
+        await serializeDrain(async () => {
           const combined = [...readSpool(SPOOL_DIR, sid), ...(await r.cli.pollInbox())];
           const fresh = filterNovel(combined, dedup);
+          ctx.ui.notify(
+            fresh.length ? fresh.map((m) => `${m.from_alias}: ${m.content}`).join("\n") : "(no messages)",
+            "info",
+          );
           markDelivered(fresh, dedup);
           clearSpool(SPOOL_DIR, sid);
-          return fresh;
         });
-        ctx.ui.notify(
-          novel.length ? novel.map((m) => `${m.from_alias}: ${m.content}`).join("\n") : "(no messages)",
-          "info",
-        );
       } catch (e) {
         ctx.ui.notify(`c2c poll-inbox failed: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
