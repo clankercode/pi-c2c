@@ -189,6 +189,18 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   let relayRegistered = false;
   let relayAddress: string | undefined;
   let relayError: string | undefined;
+  /**
+   * The opaque_host_id the relay has on file for us. Computed locally
+   * (`computeHostHash()`) and verified against the relay's stored value
+   * after registration. If the two disagree, something is wrong
+   * upstream (relay API change, env-var drift, recipe mismatch) and
+   * `relayError` captures the discrepancy. C2c slice 1 of the
+   * opaque_host_id design plumbed the field through the lease
+   * (`ocaml/relay.ml:RegistrationLease.opaque_host_id`); this is the
+   * extension's consumer side.
+   */
+  let relayHostId: string | undefined;
+  let relayHostIdVerified: boolean = false;
 
   // Serialize drains so the background poller and a manual `c2c_pi_poll_inbox`
   // tool never drain concurrently (which could split a batch).
@@ -463,10 +475,35 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         }
         const hostHash = computeHostHash();
         const relayAlias = deriveRelayAlias(identity.alias, hostHash);
-        await cli!.relayRegister(relayAlias, { relayUrl });
+        const reg = await cli!.relayRegister(relayAlias, { relayUrl });
         relayRegistered = true;
         relayAddress = relayAlias;
         relayError = undefined;
+        // The relay stores our opaque_host_id in the lease (c2c slice 1 of
+        // the opaque_host_id design). Use it if present; otherwise fall back
+        // to the alias suffix for back-compat with relays that don't yet
+        // return the field.
+        relayHostId = reg?.opaqueHostId ?? relayAlias.split("#")[1];
+        relayHostIdVerified = reg?.opaqueHostId === hostHash;
+        // Sanity-check via relay list that the stored id matches what we
+        // sent. This catches env-var drift, relay API changes, and recipe
+        // mismatches early.
+        try {
+          const peers = await cli!.relayList();
+          const self = peers.find((p) => p.alias === relayAlias);
+          if (self) {
+            const suffix = self.alias.split("#")[1];
+            if (suffix && suffix !== hostHash) {
+              relayHostIdVerified = false;
+              relayError = `opaque_host_id mismatch: local=${hostHash} relay=${suffix}`;
+            } else if (suffix === hostHash) {
+              relayHostIdVerified = true;
+            }
+          }
+        } catch {
+          // Verification is best-effort; don't fail the whole registration
+          // over a list call that didn't work.
+        }
       } catch (e: unknown) {
         relayRegistered = false;
         relayError = e instanceof Error ? e.message : String(e);
@@ -502,6 +539,8 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     relayRegistered = false;
     relayAddress = undefined;
     relayError = undefined;
+    relayHostId = undefined;
+    relayHostIdVerified = false;
     peerStatusStore.clear();
   });
 
@@ -893,6 +932,11 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       `  broker      ${registered ? "connected" : registerError ?? "not connected"}`,
       `  cross-repo  ${xrepo}`,
       `  relay       ${relay}`,
+      // The relay-stored opaque_host_id (verified against our local
+      // host_hash after register). Shows `---` when not registered or
+      // when the verification hasn't completed yet. The (verified) or
+      // (unverified) suffix indicates whether the relay agrees.
+      `  relay_host  ${relayHostId ? `${relayHostId}${relayHostIdVerified ? "" : " (unverified)"}` : "---"}`,
       `  poll        ${pollIntervalMs}ms`,
     ];
 
