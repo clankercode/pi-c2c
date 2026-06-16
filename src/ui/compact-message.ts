@@ -13,6 +13,7 @@
 import type { Component } from "@earendil-works/pi-tui";
 import { Container, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { parseStatusEnvelope, type StatusEnvelope } from "../status-sync.ts";
 
 /** Structured metadata passed in `sendMessage(...).details`. */
 export interface C2cDeliveryDetails {
@@ -34,10 +35,12 @@ interface MessageLike<T> {
 export interface ParsedEnvelope {
   from: string;
   body: string;
+  event: "message" | "status";
+  status?: StatusEnvelope;
 }
 
 /**
- * Extract `<c2c from="...">...</c2c>` envelopes from the raw content.
+ * Extract `<c2c ...>...</c2c>` envelopes from the raw content.
  * Tolerant: if no envelopes are found, the whole content is treated as a
  * single message from a generic sender so the renderer never renders nothing.
  */
@@ -45,12 +48,43 @@ export function parseC2cEnvelopes(content: string): ParsedEnvelope[] {
   const out: ParsedEnvelope[] = [];
   const re = /<c2c\b[^>]*?\sfrom="([^"]*)"[^>]*>([\s\S]*?)<\/c2c>/g;
   let match: RegExpExecArray | null;
+
   while ((match = re.exec(content)) !== null) {
+    const eventAttr = match[0].match(/\bevent="([^"]*)"/)?.[1] ?? "message";
     const body = match[2].replace(/^\n+|\n+$/g, "");
-    out.push({ from: match[1], body });
+
+    // If a normal message envelope carries a self-contained status envelope
+    // as its body (how status broadcasts are delivered from the broker),
+    // unwrap it so the renderer treats it as a status update rather than a
+    // message containing XML.
+    const embeddedStatus = eventAttr === "message" ? parseStatusEnvelope(body) : null;
+    if (embeddedStatus) {
+      out.push({
+        from: embeddedStatus.from,
+        body: `status=${embeddedStatus.state}`,
+        event: "status",
+        status: embeddedStatus,
+      });
+      continue;
+    }
+
+    out.push({ from: match[1], body, event: eventAttr as "message" | "status" });
   }
+
   if (out.length === 0 && content.trim().length > 0) {
-    out.push({ from: "c2c", body: content.trim() });
+    // Last chance: maybe the content is a bare status envelope (self-closing,
+    // so the previous regex did not match it).
+    const bareStatus = parseStatusEnvelope(content.trim());
+    if (bareStatus) {
+      out.push({
+        from: bareStatus.from,
+        body: `status=${bareStatus.state}`,
+        event: "status",
+        status: bareStatus,
+      });
+    } else {
+      out.push({ from: "c2c", body: content.trim(), event: "message" });
+    }
   }
   return out;
 }
@@ -62,6 +96,11 @@ function firstSnippet(body: string): string {
     .map((line) => line.trim())
     .find((line) => line.length > 0) ?? "";
   return firstLine.replace(/\s+/g, " ").trim();
+}
+
+function buildStatusLine(envelope: ParsedEnvelope): string {
+  const state = envelope.status?.state ?? "unknown";
+  return `is ${state}`;
 }
 
 /** Build the single-line collapsed representation. */
@@ -77,13 +116,20 @@ export function buildCompactLine(
   const count = details?.count ?? envelopes.length;
   const senders = details?.senders ?? envelopes.map((e) => e.from);
   const primarySender = senders[0] ?? "c2c";
-  const snippet = firstSnippet(envelopes[0]?.body ?? content);
+  const primary = envelopes[0];
+  const snippet = primary?.event === "status"
+    ? buildStatusLine(primary)
+    : firstSnippet(primary?.body ?? content);
 
   const parts: string[] = [];
   parts.push(" " + theme.fg("accent", `${ICON} ${KIND}`));
 
   if (count <= 1) {
-    parts.push(theme.fg("text", `from ${primarySender}`));
+    if (primary?.event === "status") {
+      parts.push(theme.fg("text", `${primarySender}`));
+    } else {
+      parts.push(theme.fg("text", `from ${primarySender}`));
+    }
   } else {
     parts.push(theme.fg("text", `${count} messages`));
     if (senders.length > 0) {
@@ -110,8 +156,11 @@ export function buildExpandedComponent(
   const count = details?.count ?? envelopes.length;
   const senders = details?.senders ?? envelopes.map((e) => e.from);
 
+  const primary = envelopes[0];
   const header = count <= 1
-    ? `${ICON} ${KIND} · message from ${senders[0] ?? "c2c"}`
+    ? primary?.event === "status"
+      ? `${ICON} ${KIND} · status from ${senders[0] ?? "c2c"}`
+      : `${ICON} ${KIND} · message from ${senders[0] ?? "c2c"}`
     : `${ICON} ${KIND} · ${count} messages`;
 
   const container = new Container();
@@ -120,9 +169,14 @@ export function buildExpandedComponent(
 
   for (const envelope of envelopes) {
     if (envelope.from) {
-      container.addChild(new Text(theme.fg("text", `${envelope.from}:`), 1, 0));
+      if (envelope.event === "status" && envelope.status) {
+        const statusLine = `${envelope.from}: state=${envelope.status.state} since=${envelope.status.since} ttl_ms=${envelope.status.ttl_ms}`;
+        container.addChild(new Text(theme.fg("text", statusLine), 1, 0));
+      } else {
+        container.addChild(new Text(theme.fg("text", `${envelope.from}:`), 1, 0));
+        container.addChild(new Text(theme.fg("toolOutput", envelope.body), 1, 0));
+      }
     }
-    container.addChild(new Text(theme.fg("toolOutput", envelope.body), 1, 0));
     container.addChild(new Spacer(1));
   }
 
