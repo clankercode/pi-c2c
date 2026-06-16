@@ -869,6 +869,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   function buildLocalInfoText(): string {
     const alias = identity?.alias ?? "(not registered)";
     const sessionId = identity?.sessionId ?? "(none)";
+    const hostHash = relayEnabled ? computeHostHash() : undefined;
     const addr = relayRegistered ? relayAddress ?? "---" : "---";
     const xrepo = crossRepoEnabled
       ? crossRepoSessionsRegistered
@@ -890,6 +891,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       "─".repeat(36),
       `  alias       ${alias}`,
       `  session     ${sessionId}`,
+      `  host_hash   ${hostHash ?? "(n/a)"}`,
       `  address     ${addr}`,
       "",
       `  broker      ${registered ? "connected" : registerError ?? "not connected"}`,
