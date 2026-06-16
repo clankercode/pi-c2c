@@ -21,10 +21,86 @@ export interface C2cDeliveryDetails {
   count: number;
   /** Unique sender aliases present in this delivery (first-seen order). */
   senders: string[];
+  /** Alias of the receiving session, used to distinguish outgoing/broadcast. */
+  selfAlias?: string;
 }
 
-const ICON = "◈";
 const KIND = "c2c";
+
+/** Glyph vocabulary for c2c message lines. */
+const GLYPHS = {
+  incoming: "▼",
+  outgoing: "▲",
+  broadcast: "✶",
+  status: "●",
+} as const;
+
+/** Route glyphs for the source broker/channel. */
+const ROUTES = {
+  local: "⌂",
+  sessions: "◎",
+  relay: "⇄",
+} as const;
+
+/** ASCII fallbacks when terminal Unicode support is uncertain. */
+const ASCII_GLYPHS = {
+  incoming: "v",
+  outgoing: "^",
+  broadcast: "*",
+  status: "o",
+} as const;
+
+const ASCII_ROUTES = {
+  local: "[local]",
+  sessions: "[sessions]",
+  relay: "[relay]",
+} as const;
+
+/** Detect whether we should use ASCII fallbacks.
+ *  Honours a manual `PI_C2C_ASCII=1` override; otherwise uses Unicode. */
+function useAsciiGlyphs(): boolean {
+  return process.env.PI_C2C_ASCII === "1";
+}
+
+/** Pick a route glyph for a sender alias. Relay aliases end with `#<hash>`;
+ *  otherwise we can't know the broker from the message alone, so we default
+ *  to the cross-repo sessions route for non-local-looking aliases. */
+function routeForAlias(alias: string): keyof typeof ROUTES {
+  if (alias.includes("#")) return "relay";
+  return "sessions";
+}
+
+/** Build the colored prefix for a c2c message line. */
+function buildPrefix(
+  direction: "incoming" | "outgoing" | "broadcast" | "status",
+  route: keyof typeof ROUTES,
+  theme: Theme,
+): string {
+  const ascii = useAsciiGlyphs();
+  const dirGlyph = ascii ? ASCII_GLYPHS[direction] : GLYPHS[direction];
+  const routeGlyph = ascii ? ASCII_ROUTES[route] : ROUTES[route];
+
+  let dirColor: import("@earendil-works/pi-coding-agent").ThemeColor;
+  switch (direction) {
+    case "incoming":
+      dirColor = "success";
+      break;
+    case "outgoing":
+      dirColor = "accent";
+      break;
+    case "broadcast":
+      dirColor = "warning";
+      break;
+    case "status":
+      dirColor = "borderMuted";
+      break;
+  }
+
+  if (ascii) {
+    return `${theme.fg(dirColor, dirGlyph)}${theme.fg("borderMuted", routeGlyph)} `;
+  }
+  return `${theme.fg(dirColor, dirGlyph)}${theme.fg("borderMuted", routeGlyph)} `;
+}
 
 interface MessageLike<T> {
   content: string | unknown[];
@@ -108,6 +184,7 @@ export function buildCompactLine(
   message: MessageLike<C2cDeliveryDetails>,
   theme: Theme,
   width: number,
+  selfAlias?: string,
 ): string {
   const content = typeof message.content === "string" ? message.content : "";
   const envelopes = parseC2cEnvelopes(content);
@@ -121,14 +198,22 @@ export function buildCompactLine(
     ? buildStatusLine(primary)
     : firstSnippet(primary?.body ?? content);
 
+  const me = selfAlias ?? message.details?.selfAlias;
+  const direction: "incoming" | "outgoing" | "broadcast" | "status" = primary?.event === "status"
+    ? "status"
+    : primarySender === me
+      ? "outgoing"
+      : "incoming";
+  const route = routeForAlias(primarySender);
+
   const parts: string[] = [];
-  parts.push(" " + theme.fg("accent", `${ICON} ${KIND}`));
+  parts.push(" " + buildPrefix(direction, route, theme));
 
   if (count <= 1) {
     if (primary?.event === "status") {
       parts.push(theme.fg("text", `${primarySender}`));
     } else {
-      parts.push(theme.fg("text", `from ${primarySender}`));
+      parts.push(theme.fg("text", `${primarySender}`));
     }
   } else {
     parts.push(theme.fg("text", `${count} messages`));
@@ -148,6 +233,7 @@ export function buildCompactLine(
 export function buildExpandedComponent(
   message: MessageLike<C2cDeliveryDetails>,
   theme: Theme,
+  selfAlias?: string,
 ): Component {
   const content = typeof message.content === "string" ? message.content : "";
   const envelopes = parseC2cEnvelopes(content);
@@ -156,12 +242,21 @@ export function buildExpandedComponent(
   const count = details?.count ?? envelopes.length;
   const senders = details?.senders ?? envelopes.map((e) => e.from);
 
+  const me = selfAlias ?? message.details?.selfAlias;
   const primary = envelopes[0];
+  const primarySender = senders[0] ?? "c2c";
+  const direction: "incoming" | "outgoing" | "broadcast" | "status" = primary?.event === "status"
+    ? "status"
+    : primarySender === me
+      ? "outgoing"
+      : "incoming";
+  const route = routeForAlias(primarySender);
+  const prefix = buildPrefix(direction, route, theme);
   const header = count <= 1
     ? primary?.event === "status"
-      ? `${ICON} ${KIND} · status from ${senders[0] ?? "c2c"}`
-      : `${ICON} ${KIND} · message from ${senders[0] ?? "c2c"}`
-    : `${ICON} ${KIND} · ${count} messages`;
+      ? `${prefix}${KIND} · status from ${primarySender}`
+      : `${prefix}${KIND} · message from ${primarySender}`
+    : `${prefix}${KIND} · ${count} messages`;
 
   const container = new Container();
   container.addChild(new Text(theme.fg("accent", header), 1, 0));
@@ -192,6 +287,7 @@ export class CompactC2cMessage implements Component {
     private readonly message: MessageLike<C2cDeliveryDetails>,
     private readonly expanded: boolean,
     private readonly theme: Theme,
+    private readonly selfAlias?: string,
   ) {}
 
   render(width: number): string[] {
@@ -200,8 +296,8 @@ export class CompactC2cMessage implements Component {
     }
 
     this.cachedLines = this.expanded
-      ? buildExpandedComponent(this.message, this.theme).render(width)
-      : [buildCompactLine(this.message, this.theme, width)];
+      ? buildExpandedComponent(this.message, this.theme, this.selfAlias).render(width)
+      : [buildCompactLine(this.message, this.theme, width, this.selfAlias)];
     this.cachedWidth = width;
     return this.cachedLines;
   }
@@ -219,6 +315,7 @@ export class CompactC2cMessage implements Component {
 /** Register the compact c2c message renderer on an ExtensionAPI. */
 export function registerC2cMessageRenderer(pi: ExtensionAPI): void {
   pi.registerMessageRenderer<C2cDeliveryDetails>(KIND, (message, { expanded }, theme) => {
-    return new CompactC2cMessage(message, expanded, theme);
+    const selfAlias = message.details?.selfAlias;
+    return new CompactC2cMessage(message, expanded, theme, selfAlias);
   });
 }

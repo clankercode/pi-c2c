@@ -28,6 +28,7 @@ function makeMessage(
       ? ({
           count: details.count ?? 1,
           senders: details.senders ?? ["c2c"],
+          selfAlias: details.selfAlias,
         } as C2cDeliveryDetails)
       : undefined,
   };
@@ -110,7 +111,24 @@ describe("buildCompactLine", () => {
     const line = buildCompactLine(msg, plainTheme, 80);
     assert.ok(line.includes("lyra-quill"));
     assert.ok(line.includes("ERROR: timeout"));
-    assert.ok(line.includes("◈ c2c"));
+    assert.ok(line.includes("▼"));
+    assert.ok(line.includes("◎"));
+  });
+
+  it("shows outgoing direction when sender matches selfAlias", () => {
+    const msg = makeMessage(envelope("pi-313d8c", "on it"), {
+      senders: ["pi-313d8c"],
+      selfAlias: "pi-313d8c",
+    });
+    const line = buildCompactLine(msg, plainTheme, 80);
+    assert.ok(line.includes("▲"));
+    assert.ok(line.includes("pi-313d8c"));
+  });
+
+  it("shows relay route for aliases with #host_hash", () => {
+    const msg = makeMessage(envelope("remote#a3b2c1d4e5f6", "hello"));
+    const line = buildCompactLine(msg, plainTheme, 80);
+    assert.ok(line.includes("⇄"));
   });
 
   it("shows the count and senders for multiple messages", () => {
@@ -136,13 +154,13 @@ describe("buildCompactLine", () => {
     const line = buildCompactLine(msg, plainTheme, 80);
     assert.ok(line.includes("lyra-quill"));
     assert.ok(line.includes("is processing"));
-    assert.ok(line.includes("◈ c2c"));
+    assert.ok(line.includes("●"));
   });
 
   it("handles content arrays by treating them as empty", () => {
     const msg = { content: [{ type: "text" }] as unknown[], details: { count: 1, senders: ["x"] } as C2cDeliveryDetails };
     const line = buildCompactLine(msg, plainTheme, 40);
-    assert.ok(line.includes("from x"));
+    assert.ok(line.includes("x"));
     assert.ok(visibleWidth(line) <= 40);
   });
 });

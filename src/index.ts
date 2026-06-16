@@ -217,6 +217,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     const details: C2cDeliveryDetails = {
       count: novel.length,
       senders: [...new Set(novel.map((m) => m.from_alias || "unknown"))],
+      selfAlias: identity?.alias,
     };
     const idle = ctxRef?.isIdle() ?? true;
     try {
