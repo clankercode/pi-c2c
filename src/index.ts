@@ -23,7 +23,7 @@ import * as path from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { copyToClipboard } from "@earendil-works/pi-coding-agent";
-import { C2cCli, type C2cMessage, type ExecFn, resolveSessionsBrokerRoot } from "./c2c-cli.ts";
+import { C2cCli, type C2cMessage, type ExecFn, type RelayMessage, resolveSessionsBrokerRoot } from "./c2c-cli.ts";
 import { establishIdentity, type Identity } from "./identity.ts";
 import {
   DeliveryDedup,
@@ -189,6 +189,26 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   let relayAddress: string | undefined;
   let relayError: string | undefined;
 
+  /**
+   * Map a relay DM envelope (`fromAlias`/`toAlias`) into the broker DM shape
+   * (`from_alias`/`to_alias`) so the rest of the drain pipeline is identical
+   * to local broker messages — status filtering, dedup, spool, inject.
+   *
+   * Pure so it's trivially unit-testable in isolation.
+   */
+  function relayToC2c(msgs: RelayMessage[]): C2cMessage[] {
+    const out: C2cMessage[] = [];
+    for (const m of msgs) {
+      out.push({
+        from_alias: m.fromAlias,
+        to_alias: m.toAlias,
+        content: m.content,
+        ts: m.ts,
+      });
+    }
+    return out;
+  }
+
   // Serialize drains so the background poller and a manual `c2c_pi_poll_inbox`
   // tool never drain concurrently (which could split a batch).
   let drainChain: Promise<void> = Promise.resolve();
@@ -257,6 +277,20 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           drained.push(...(await cli!.pollInbox({ brokerRoot: sessionsBrokerRoot })));
         } catch {
           // sessions broker hiccup — ignore, retry next tick
+        }
+      }
+      // Third hop: drain the public relay for cross-machine DMs. The
+      // broker ships with `c2c relay dm poll`; we map the relay envelope
+      // (fromAlias/toAlias) into the C2cMessage shape (from_alias/to_alias)
+      // so the rest of the pipeline is identical to local drains. A
+      // failing relay MUST NOT break the local drains — a network blip on
+      // relay.c2c.im shouldn't cost us local messages.
+      if (relayRegistered && relayAddress) {
+        try {
+          const relayMsgs = await cli!.relayDmPoll(relayAddress);
+          for (const c of relayToC2c(relayMsgs)) drained.push(c);
+        } catch {
+          // relay hiccup — ignore, retry next tick
         }
       }
       // Silently track peer status envelopes: any message that parses as a
@@ -543,7 +577,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_pi_send",
     label: "c2c send",
-    description: "Send a c2c direct message to a peer agent by alias. Routes via the sessions broker first (cross-repo) then falls back to the per-repo broker.",
+    description: "Send a c2c direct message to a peer agent by alias. Routes via the sessions broker first (cross-repo), then the per-repo broker, then the public relay (when registered) for cross-machine peers.",
     parameters: Type.Object({
       target: Type.String({ description: "Recipient alias (e.g. 'lyra-quill') or session id." }),
       body: Type.String({ description: "Message body." }),
@@ -553,25 +587,32 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const r = ready();
       const details: SendToolDetails = { kind: "dm", target };
       if (!r) return toolText(notReadyText, details);
-      // Try the cross-repo (sessions) broker first — it's the rendezvous
-      // point for pi sessions in other repos, and most local peers are
-      // also registered there. Fall back to the per-repo broker if the
-      // sessions broker doesn't know the alias (e.g. legacy non-pi peers).
-      const targets: Array<{ root?: string; via: string }> = [];
-      if (sessionsBrokerRoot) targets.push({ root: sessionsBrokerRoot, via: "sessions" });
-      targets.push({ root: undefined, via: "per-repo" });
+      // Try each transport in order until one accepts the target. Order
+      // matters: local brokers know more aliases than the relay (which
+      // sees only registered `<alias>#<host_hash>` identities), so we
+      // exhaust local first to avoid sending cross-machine when a local
+      // match would have worked.
+      type Hop = { kind: "sessions" | "per-repo" | "relay"; root?: string };
+      const hops: Hop[] = [];
+      if (sessionsBrokerRoot) hops.push({ kind: "sessions", root: sessionsBrokerRoot });
+      hops.push({ kind: "per-repo" });
+      if (relayRegistered && relayAddress) hops.push({ kind: "relay" });
       let lastErr: unknown = null;
-      for (const t of targets) {
+      for (const hop of hops) {
         try {
-          await r.cli.send(target, body, { brokerRoot: t.root });
-          return toolText(`Sent to ${target} (via ${t.via}).`, details);
+          if (hop.kind === "relay") {
+            await r.cli.relayDmSend(target, body, relayAddress!);
+          } else {
+            await r.cli.send(target, body, { brokerRoot: hop.root });
+          }
+          return toolText(`Sent to ${target} (via ${hop.kind}).`, details);
         } catch (e: unknown) {
           lastErr = e;
           const msg = e instanceof Error ? e.message : String(e);
           // If the error says "not registered", try the next broker.
           // Otherwise surface the error immediately.
           if (!/not[_ ]?registered|unknown[_ ]?alias|alias[_ ]?not[_ ]?found/i.test(msg)) {
-            return toolText(`c2c_pi_send failed (${t.via}): ${msg}`, details);
+            return toolText(`c2c_pi_send failed (${hop.kind}): ${msg}`, details);
           }
         }
       }
@@ -623,7 +664,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_pi_list",
     label: "c2c peers",
-    description: "List registered c2c peers and their liveness. Merges per-repo and cross-repo (sessions broker) peers when cross-repo is enabled. Each peer is annotated with their last known status (idle/processing/tool/input) when available.",
+    description: "List registered c2c peers and their liveness. Merges per-repo, cross-repo (sessions broker), and public-relay peers (when registered) so one call shows every reachable alias. Each peer is annotated with their last known status (idle/processing/tool/input) when available.",
     parameters: Type.Object({}),
     renderShell: "self",
     async execute() {
@@ -636,10 +677,17 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         const remotePeers = sessionsBrokerRoot
           ? await r.cli.list({ brokerRoot: sessionsBrokerRoot }).catch(() => [])
           : [];
+        // Public relay list (when registered). Relay peers use the
+        // `<alias>#<host_hash>` format — we keep the full alias as the
+        // dedup key so the LLM can DM them via `c2c_pi_send` (which now
+        // falls through to `c2c relay dm send`).
+        const relayPeers = relayRegistered
+          ? await r.cli.relayList().catch(() => [])
+          : [];
         // Merge + dedup by session_id (prefer the live entry). Tag with
-        // [local] / [cross] so the user can see which broker they came
-        // from. This is a key UX win for cross-repo visibility.
-        const bySid = new Map<string, { alias: string; alive: boolean; tag: "local" | "cross" }>();
+        // [local] / [cross] / [relay] so the user can see which broker
+        // they came from. This is a key UX win for cross-machine visibility.
+        const bySid = new Map<string, { alias: string; alive: boolean; tag: "local" | "cross" | "relay" }>();
         for (const p of localPeers) {
           bySid.set(p.session_id, { alias: p.alias, alive: p.alive, tag: "local" });
         }
@@ -650,6 +698,17 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           } else if (!existing.alive && p.alive) {
             // Prefer the live one and keep its tag.
             bySid.set(p.session_id, { alias: p.alias, alive: p.alive, tag: existing.tag });
+          }
+        }
+        for (const p of relayPeers) {
+          // Relay has no `session_id` we can correlate with; dedup by
+          // the derived `<alias>#<host_hash>` alias itself.
+          const key = `relay:${p.alias}`;
+          const existing = bySid.get(key);
+          if (!existing) {
+            bySid.set(key, { alias: p.alias, alive: p.alive, tag: "relay" });
+          } else if (!existing.alive && p.alive) {
+            bySid.set(key, { alias: p.alias, alive: p.alive, tag: existing.tag });
           }
         }
         // Sort: live first, then by alias

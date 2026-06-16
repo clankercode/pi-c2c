@@ -24,7 +24,7 @@ export interface SendToolDetails {
 export interface ListPeerInfo {
   alias: string;
   alive: boolean;
-  tag?: "local" | "cross";
+  tag?: "local" | "cross" | "relay";
   /** Last known runtime state from the peer status store, if recorded. */
   state?: string;
 }
@@ -145,7 +145,11 @@ export function renderListResult(details: ListToolDetails, isError: boolean, the
   }
 
   for (const peer of peers) {
-    const tag = peer.tag === "cross" ? theme.fg("borderMuted", "  [cross-repo]") : "";
+    const tag = peer.tag === "cross"
+      ? theme.fg("borderMuted", "  [cross-repo]")
+      : peer.tag === "relay"
+        ? theme.fg("accent", "  [relay]")
+        : "";
     const stateSuffix = peer.state
       ? "  " + theme.fg(statusColor(peer.state), `[${peer.state}]`)
       : "";

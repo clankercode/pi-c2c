@@ -82,6 +82,19 @@ describe("renderListResult", () => {
     assert.ok(joined.includes("[cross-repo]"));
   });
 
+  it("renders relay peers with [relay] tag", () => {
+    const details: ListToolDetails = {
+      peers: [
+        { alias: "remote#a3b2c1d4e5f6", alive: true, tag: "relay" },
+      ],
+    };
+    const lines = renderListResult(details, false, plainTheme).render(80);
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("remote#a3b2c1d4e5f6"));
+    assert.ok(joined.includes("[relay]"));
+    assert.ok(!joined.includes("[cross-repo]"));
+  });
+
   it("renders empty peer list", () => {
     const lines = renderListResult({ peers: [] }, false, plainTheme).render(80);
     const joined = lines.join("\n");
