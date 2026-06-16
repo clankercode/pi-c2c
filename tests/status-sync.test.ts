@@ -176,3 +176,16 @@ test("formatStatusEnvelope escapes XML special characters", () => {
   assert.ok(!xml.includes('from="pi-"special""'));
   assert.ok(xml.includes("pi-&quot;special&quot;"));
 });
+
+test("parseStatusEnvelope handles sanitized ‹c2c form", () => {
+  const sanitized = '<c2c event="message" from="peer" to="me" source="broker">\n‹c2c event="status" from="peer" state="processing" since="2026-06-17T00:00:00.000Z" ttl_ms="60000" />\n</c2c>';
+  const parsed = parseStatusEnvelope(sanitized);
+  assert.ok(parsed);
+  assert.equal(parsed!.from, "peer");
+  assert.equal(parsed!.state, "processing");
+});
+
+test("parseStatusEnvelope does not accept arbitrary text as status", () => {
+  assert.equal(parseStatusEnvelope("just some text"), null);
+  assert.equal(parseStatusEnvelope("‹c2c event=\"message\" from=\"x\" /\u003e"), null);
+});

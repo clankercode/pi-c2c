@@ -197,4 +197,16 @@ describe("buildExpandedComponent", () => {
     assert.ok(joined.includes("a:"));
     assert.ok(joined.includes("b:"));
   });
+
+  it("renders sanitized status envelopes", () => {
+    const content =
+      '<c2c event="message" from="pi-c1ab3c" to="pi-313d8c" source="broker">\n' +
+      '‹c2c event="status" from="pi-c1ab3c" state="processing" since="2026-06-16T17:29:23.881Z" ttl_ms="60000" />\n' +
+      "</c2c>";
+    const msg = makeMessage(content, { count: 1, senders: ["pi-c1ab3c"] });
+    const lines = buildExpandedComponent(msg, plainTheme).render(80);
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("status from pi-c1ab3c"));
+    assert.ok(joined.includes("state=processing"));
+  });
 });

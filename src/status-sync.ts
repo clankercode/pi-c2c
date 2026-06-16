@@ -245,9 +245,16 @@ function escapeXml(value: string): string {
 /**
  * Parse a status envelope from raw c2c content. Tolerant: returns `null` for
  * any envelope that is not a well-formed status update.
+ *
+ * Status envelopes are often delivered as the body of a normal c2c message,
+ * and peer content is sanitized so that `<c2c` becomes `‹c2c` (U+2039) to
+ * prevent envelope-breakout attacks. We normalize that back before parsing so
+ * our own status broadcasts render correctly while still ignoring genuinely
+ * malformed peer content.
  */
 export function parseStatusEnvelope(content: string): StatusEnvelope | null {
-  const match = content.match(
+  const normalized = content.replace(/‹c2c/g, "<c2c");
+  const match = normalized.match(
     /<c2c\s+event="status"\s+from="([^"]*)"\s+state="([^"]*)"\s+since="([^"]*)"\s+ttl_ms="([^"]*)"\s*\/?>/,
   );
   if (!match) return null;
