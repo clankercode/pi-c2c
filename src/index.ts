@@ -30,7 +30,6 @@ import {
   filterNovel,
   formatEnvelope,
   markDelivered,
-  notifySummary,
 } from "./delivery.ts";
 import { clearSpool, gcStaleSpools, readSpool, writeSpool } from "./spool.ts";
 import { formatStatus, installStatusColorPatch, type PiC2cBarState } from "./status.ts";
@@ -190,6 +189,11 @@ export default function c2cExtension(pi: ExtensionAPI): void {
    * Inject already-filtered messages into the transcript. Returns true if the
    * injection was enqueued; false if `pi.sendMessage` threw (e.g. the runtime
    * went stale mid-reload) so the caller can keep them spooled for retry.
+   *
+   * We intentionally do NOT fire a separate `ctx.ui.notify()` here. The
+   * compact message renderer already draws a one-line summary in the
+   * transcript, so a notification would duplicate the same information and
+   * show raw XML for status envelopes.
    */
   function inject(novel: C2cMessage[]): boolean {
     if (novel.length === 0) return true;
@@ -203,11 +207,6 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       pi.sendMessage({ customType: "c2c", content: body, display: true, details }, deliveryOptionsFor(idle));
     } catch {
       return false;
-    }
-    try {
-      ctxRef?.ui.notify(notifySummary(novel), "info");
-    } catch {
-      // notification is cosmetic — never let it fail a delivery
     }
     return true;
   }

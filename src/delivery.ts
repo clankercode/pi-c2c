@@ -12,6 +12,7 @@
  */
 
 import type { C2cMessage } from "./c2c-cli.ts";
+import { parseStatusEnvelope } from "./status-sync.ts";
 
 /** Options handed to `pi.sendMessage`'s second argument. */
 export interface DeliveryOptions {
@@ -121,6 +122,10 @@ export function deliveryOptionsFor(isIdle: boolean): DeliveryOptions {
 export function notifySummary(msgs: C2cMessage[]): string {
   if (msgs.length === 1) {
     const m = msgs[0];
+    const status = parseStatusEnvelope(m.content);
+    if (status) {
+      return `c2c: status from ${m.from_alias || "unknown"} — ${status.state}`;
+    }
     const preview = m.content.length > 60 ? `${m.content.slice(0, 57)}...` : m.content;
     return `c2c: message from ${m.from_alias || "unknown"} — ${preview}`;
   }
