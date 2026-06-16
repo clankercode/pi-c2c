@@ -884,7 +884,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const r = ready();
       if (!r) return toolText(notReadyText);
 
-      const info = buildLocalInfoText();
+      const info = await buildLocalInfoText();
       const addr = relayRegistered ? relayAddress : undefined;
 
       const parts = [info];
@@ -924,8 +924,11 @@ export default function c2cExtension(pi: ExtensionAPI): void {
 
   // --- local info helpers ------------------------------------------------
 
-  /** Build a formatted local info screen. Shared by the command and tool. */
-  function buildLocalInfoText(): string {
+  /**
+   * Build a formatted local info screen. Shared by the command and tool.
+   * Fetches relay peers when registered so the screen shows who's reachable.
+   */
+  async function buildLocalInfoText(): Promise<string> {
     const alias = identity?.alias ?? "(not registered)";
     const sessionId = identity?.sessionId ?? "(none)";
     const hostHash = relayEnabled ? computeHostHash() : undefined;
@@ -958,6 +961,23 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       `  relay       ${relay}`,
       `  poll        ${pollIntervalMs}ms`,
     ];
+
+    // Show relay peers when registered.
+    if (relayRegistered && cli) {
+      try {
+        const peers = await cli.relayList();
+        if (peers.length > 0) {
+          lines.push("");
+          lines.push("  relay peers");
+          for (const p of peers) {
+            const status = p.alive ? "●" : "○";
+            lines.push(`    ${status} ${p.alias}`);
+          }
+        }
+      } catch {
+        // relay list is best-effort
+      }
+    }
 
     return lines.join("\n");
   }
@@ -1182,7 +1202,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       }
 
       // Show the info screen with actionable options.
-      const info = buildLocalInfoText();
+      const info = await buildLocalInfoText();
       const addr = relayRegistered ? relayAddress : undefined;
 
       const options: string[] = [];
