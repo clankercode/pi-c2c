@@ -189,26 +189,6 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   let relayAddress: string | undefined;
   let relayError: string | undefined;
 
-  /**
-   * Map a relay DM envelope (`fromAlias`/`toAlias`) into the broker DM shape
-   * (`from_alias`/`to_alias`) so the rest of the drain pipeline is identical
-   * to local broker messages — status filtering, dedup, spool, inject.
-   *
-   * Pure so it's trivially unit-testable in isolation.
-   */
-  function relayToC2c(msgs: RelayMessage[]): C2cMessage[] {
-    const out: C2cMessage[] = [];
-    for (const m of msgs) {
-      out.push({
-        from_alias: m.fromAlias,
-        to_alias: m.toAlias,
-        content: m.content,
-        ts: m.ts,
-      });
-    }
-    return out;
-  }
-
   // Serialize drains so the background poller and a manual `c2c_pi_poll_inbox`
   // tool never drain concurrently (which could split a batch).
   let drainChain: Promise<void> = Promise.resolve();
@@ -748,7 +728,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_pi_poll_inbox",
     label: "c2c inbox",
-    description: "Drain and return any queued inbound c2c messages now.",
+    description: "Drain and return any queued inbound c2c messages now. Drains per-repo, sessions-broker, and public-relay (when registered) so a manual call shows the same picture as the background poller.",
     parameters: Type.Object({}),
     renderShell: "self",
     async execute() {
@@ -760,9 +740,33 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         // all inside the mutex: if formatting throws, the messages stay in the
         // broker-drained spool and remain eligible for redelivery. Replay the
         // spool too so a manual poll surfaces anything a prior background tick
-        // drained but failed to inject.
+        // drained but failed to inject. Drain all three sources (per-repo,
+        // sessions broker, public relay) for parity with the background
+        // poller — otherwise a manual call before the next tick could miss
+        // cross-machine or cross-repo DMs.
         const { text, messages } = await serializeDrain(async () => {
-          const combined = [...readSpool(SPOOL_DIR, sid), ...(await r.cli.pollInbox())];
+          const drained: C2cMessage[] = [];
+          try {
+            drained.push(...(await r.cli.pollInbox()));
+          } catch {
+            // local broker hiccup — ignore
+          }
+          if (sessionsBrokerRoot) {
+            try {
+              drained.push(...(await r.cli.pollInbox({ brokerRoot: sessionsBrokerRoot })));
+            } catch {
+              // sessions broker hiccup — ignore
+            }
+          }
+          if (relayRegistered && relayAddress) {
+            try {
+              const relayMsgs = await r.cli.relayDmPoll(relayAddress);
+              for (const c of relayToC2c(relayMsgs)) drained.push(c);
+            } catch {
+              // relay hiccup — ignore
+            }
+          }
+          const combined = [...readSpool(SPOOL_DIR, sid), ...drained];
           const fresh = filterNovel(combined, dedup);
           const rendered =
             fresh.length === 0
@@ -1222,4 +1226,27 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       }
     },
   });
+}
+
+// ── module-level helpers ────────────────────────────────────────────
+
+/**
+ * Map a relay DM envelope (`fromAlias`/`toAlias`) into the broker DM shape
+ * (`from_alias`/`to_alias`) so the rest of the drain pipeline is identical
+ * to local broker messages — status filtering, dedup, spool, inject.
+ *
+ * Exported as a top-level pure function (not an extension closure) so it's
+ * directly unit-testable without spinning up the whole extension.
+ */
+export function relayToC2c(msgs: RelayMessage[]): C2cMessage[] {
+  const out: C2cMessage[] = [];
+  for (const m of msgs) {
+    out.push({
+      from_alias: m.fromAlias,
+      to_alias: m.toAlias,
+      content: m.content,
+      ts: m.ts,
+    });
+  }
+  return out;
 }

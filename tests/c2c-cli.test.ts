@@ -352,6 +352,37 @@ test("relayDmPoll: empty list when ok=false", async () => {
   assert.equal(calls[0].args[0], "relay");
 });
 
+// --- relayToC2c (module-level helper) ----------------------------------------
+
+import { relayToC2c } from "../src/index.ts";
+
+test("relayToC2c: maps fromAlias/toAlias to snake_case", () => {
+  const out = relayToC2c([
+    { messageId: "m1", fromAlias: "peer", toAlias: "me", content: "hi", ts: 100 },
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].from_alias, "peer");
+  assert.equal(out[0].to_alias, "me");
+  assert.equal(out[0].content, "hi");
+  assert.equal(out[0].ts, 100);
+  // Relay-only fields must NOT leak into the broker shape.
+  assert.equal((out[0] as unknown as Record<string, unknown>).messageId, undefined);
+});
+
+test("relayToC2c: empty list → empty list", () => {
+  assert.deepEqual(relayToC2c([]), []);
+});
+
+test("relayToC2c: preserves input order", () => {
+  const out = relayToC2c([
+    { messageId: "1", fromAlias: "a", toAlias: "me", content: "1", ts: 1 },
+    { messageId: "2", fromAlias: "b", toAlias: "me", content: "2", ts: 2 },
+    { messageId: "3", fromAlias: "c", toAlias: "me", content: "3", ts: 3 },
+  ]);
+  assert.deepEqual(out.map((m) => m.from_alias), ["a", "b", "c"]);
+  assert.deepEqual(out.map((m) => m.ts), [1, 2, 3]);
+});
+
 // --- rooms ------------------------------------------------------------------
 
 test("parseRoomList: real my-rooms shape (room_id), string array, mixed/garbage", () => {
