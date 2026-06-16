@@ -598,6 +598,12 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         sessionsBrokerRoot,
         crossRepoSessionsRegistered,
         crossRepoSessionsError,
+        relayEnabled,
+        relayRegistered,
+        relayAddress,
+        relayHostId,
+        relayHostIdVerified,
+        relayError,
         peerStatusCount: peerStatusStore.size(),
         peerStatusSample: peerStatusStore
           .live()
@@ -1068,6 +1074,12 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         sessionsBrokerRoot,
         crossRepoSessionsRegistered,
         crossRepoSessionsError,
+        relayEnabled,
+        relayRegistered,
+        relayAddress,
+        relayHostId,
+        relayHostIdVerified,
+        relayError,
         peerStatusCount: peerStatusStore.size(),
         peerStatusSample: peerStatusStore
           .live()
