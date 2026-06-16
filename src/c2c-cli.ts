@@ -208,6 +208,152 @@ export function parseWhoami(stdout: string): C2cWhoami | null {
   return { session_id: r.session_id, alias: asString(r.alias) };
 }
 
+// --- Relay types and parsers ------------------------------------------------
+
+/** Local Ed25519 identity as reported by `c2c relay identity show --json`. */
+export interface RelayIdentity {
+  path: string;
+  publicKey: string;
+  fingerprint: string;
+  aliasHint: string;
+  createdAt: string;
+}
+
+/** A peer registered on a c2c relay, from `c2c relay list --json`. */
+export interface RelayPeer {
+  nodeId: string;
+  sessionId: string;
+  alias: string;
+  clientType: string;
+  registeredAt: number;
+  lastSeen: number;
+  ttl: number;
+  alive: boolean;
+  identityPk: string;
+}
+
+/** Result of `c2c relay register --json`. */
+export interface RelayRegisterResult {
+  alias: string;
+  sessionId: string;
+  nodeId: string;
+  registeredAt: number;
+  ttl: number;
+  alive: boolean;
+}
+
+/** A direct message delivered via a c2c relay, from `c2c relay dm poll --json`. */
+export interface RelayMessage {
+  messageId: string;
+  fromAlias: string;
+  toAlias: string;
+  content: string;
+  ts: number;
+}
+
+/** Common relay JSON envelope: `{ ok: true, ... }` or `{ ok: false, error_code, error }`. */
+function parseRelayOk(stdout: string): { ok: true; data: Record<string, unknown> } | { ok: false; error: string } {
+  let data: unknown;
+  try {
+    data = JSON.parse(stdout);
+  } catch {
+    return { ok: false, error: "invalid JSON" };
+  }
+  if (!data || typeof data !== "object") return { ok: false, error: "not an object" };
+  const r = data as Record<string, unknown>;
+  if (r.ok !== true) {
+    const msg = typeof r.error === "string" ? r.error : "relay command failed";
+    return { ok: false, error: msg };
+  }
+  return { ok: true, data: r };
+}
+
+/** Parse `c2c relay identity show --json` output. */
+export function parseRelayIdentity(stdout: string): RelayIdentity | null {
+  const parsed = parseRelayOk(stdout);
+  if (!parsed.ok) return null;
+  const r = parsed.data;
+  if (typeof r.public_key !== "string" || typeof r.fingerprint !== "string") return null;
+  return {
+    path: asString(r.path),
+    publicKey: r.public_key,
+    fingerprint: r.fingerprint,
+    aliasHint: asString(r.alias_hint),
+    createdAt: asString(r.created_at),
+  };
+}
+
+/** Parse `c2c relay list --json` output. */
+export function parseRelayPeers(stdout: string): RelayPeer[] {
+  const parsed = parseRelayOk(stdout);
+  if (!parsed.ok) return [];
+  const peers = parsed.data.peers;
+  if (!Array.isArray(peers)) return [];
+  const out: RelayPeer[] = [];
+  for (const raw of peers) {
+    if (!raw || typeof raw !== "object") continue;
+    const p = raw as Record<string, unknown>;
+    if (typeof p.alias !== "string") continue;
+    out.push({
+      nodeId: asString(p.node_id),
+      sessionId: asString(p.session_id),
+      alias: p.alias,
+      clientType: asString(p.client_type),
+      registeredAt: typeof p.registered_at === "number" ? p.registered_at : 0,
+      lastSeen: typeof p.last_seen === "number" ? p.last_seen : 0,
+      ttl: typeof p.ttl === "number" ? p.ttl : 0,
+      alive: p.alive === true,
+      identityPk: asString(p.identity_pk),
+    });
+  }
+  return out;
+}
+
+/** Parse `c2c relay register --json` output. */
+export function parseRelayRegister(stdout: string): RelayRegisterResult | null {
+  const parsed = parseRelayOk(stdout);
+  if (!parsed.ok) return null;
+  const lease = parsed.data.lease;
+  if (!lease || typeof lease !== "object") return null;
+  const l = lease as Record<string, unknown>;
+  if (typeof l.alias !== "string") return null;
+  return {
+    alias: l.alias,
+    sessionId: asString(l.session_id),
+    nodeId: asString(l.node_id),
+    registeredAt: typeof l.registered_at === "number" ? l.registered_at : 0,
+    ttl: typeof l.ttl === "number" ? l.ttl : 0,
+    alive: l.alive === true,
+  };
+}
+
+/** Parse `c2c relay dm poll --json` output. */
+export function parseRelayMessages(stdout: string): RelayMessage[] {
+  const parsed = parseRelayOk(stdout);
+  if (!parsed.ok) return [];
+  const msgs = parsed.data.messages;
+  if (!Array.isArray(msgs)) return [];
+  const out: RelayMessage[] = [];
+  for (const raw of msgs) {
+    if (!raw || typeof raw !== "object") continue;
+    const m = raw as Record<string, unknown>;
+    if (typeof m.content !== "string" || typeof m.from_alias !== "string") continue;
+    out.push({
+      messageId: asString(m.message_id),
+      fromAlias: m.from_alias,
+      toAlias: asString(m.to_alias),
+      content: m.content,
+      ts: typeof m.ts === "number" ? m.ts : 0,
+    });
+  }
+  return out;
+}
+
+/** Strip the `SHA256:` prefix from `c2c relay identity fingerprint` output. */
+export function parseRelayFingerprint(stdout: string): string {
+  return stdout.trim().replace(/^SHA256:/, "");
+}
+
 // --- CLI wrapper ------------------------------------------------------------
 
 export interface C2cCliOptions {
@@ -365,5 +511,77 @@ export class C2cCli {
   async roomHistory(room: string, limit = 50): Promise<C2cMessage[]> {
     const res = await this.run(["rooms", "history", "--json", "--limit", String(limit), "--", room]);
     return parseMessages(res.stdout);
+  }
+
+  // --- relay ----------------------------------------------------------------
+
+  /** Show the local Ed25519 relay identity. */
+  async relayIdentity(opts?: { signal?: AbortSignal }): Promise<RelayIdentity | null> {
+    const res = await this.run(["relay", "identity", "show", "--json"], { signal: opts?.signal });
+    return parseRelayIdentity(res.stdout);
+  }
+
+  /** Print just the SHA256 fingerprint of the local relay identity. */
+  async relayFingerprint(opts?: { signal?: AbortSignal }): Promise<string> {
+    const res = await this.run(["relay", "identity", "fingerprint"], { signal: opts?.signal });
+    return parseRelayFingerprint(res.stdout);
+  }
+
+  /** Register a derived alias on the configured relay. */
+  async relayRegister(
+    alias: string,
+    opts?: { relayUrl?: string; token?: string; signal?: AbortSignal },
+  ): Promise<RelayRegisterResult | null> {
+    const args = ["relay", "register", "--alias", alias];
+    if (opts?.relayUrl) args.push("--relay-url", opts.relayUrl);
+    if (opts?.token) args.push("--token", opts.token);
+    const res = await this.run(args, { signal: opts?.signal });
+    return parseRelayRegister(res.stdout);
+  }
+
+  /** List peers registered on the relay. */
+  async relayList(opts?: { relayUrl?: string; token?: string; signal?: AbortSignal }): Promise<RelayPeer[]> {
+    const args = ["relay", "list"];
+    if (opts?.relayUrl) args.push("--relay-url", opts.relayUrl);
+    if (opts?.token) args.push("--token", opts.token);
+    const res = await this.run(args, { signal: opts?.signal });
+    return parseRelayPeers(res.stdout);
+  }
+
+  /** Poll the relay inbox for `alias`. */
+  async relayDmPoll(
+    alias: string,
+    opts?: { relayUrl?: string; token?: string; signal?: AbortSignal },
+  ): Promise<RelayMessage[]> {
+    const args = ["relay", "dm", "poll", "--alias", alias];
+    if (opts?.relayUrl) args.push("--relay-url", opts.relayUrl);
+    if (opts?.token) args.push("--token", opts.token);
+    const res = await this.run(args, { signal: opts?.signal });
+    return parseRelayMessages(res.stdout);
+  }
+
+  /** Send a DM to `target` via the relay, from `alias`. */
+  async relayDmSend(
+    target: string,
+    body: string,
+    alias: string,
+    opts?: { relayUrl?: string; token?: string; signal?: AbortSignal },
+  ): Promise<void> {
+    const args = ["relay", "dm", "send", "--alias", alias, "--", target, body];
+    if (opts?.relayUrl) args.push("--relay-url", opts.relayUrl);
+    if (opts?.token) args.push("--token", opts.token);
+    await this.run(args, { signal: opts?.signal });
+  }
+
+  /** Broadcast a message to all relay peers, from `alias`. */
+  async relayDmSendAll(
+    body: string,
+    alias: string,
+    opts?: { relayUrl?: string; token?: string; signal?: AbortSignal },
+  ): Promise<void> {
+    const args = ["relay", "dm", "send-all", "--alias", alias, "--", body];
+    if (opts?.relayUrl) args.push("--relay-url", opts.relayUrl);
+    if (opts?.token) args.push("--token", opts.token);
+    await this.run(args, { signal: opts?.signal });
   }
 }

@@ -7,6 +7,11 @@ import {
   parsePeers,
   parseWhoami,
   parseRoomList,
+  parseRelayFingerprint,
+  parseRelayIdentity,
+  parseRelayMessages,
+  parseRelayPeers,
+  parseRelayRegister,
   type ExecFn,
   type ExecResultLike,
 } from "../src/c2c-cli.ts";
@@ -75,6 +80,108 @@ test("parseWhoami: valid, missing alias, and unusable", () => {
   assert.equal(parseWhoami('{"alias":"x"}'), null);
   assert.equal(parseWhoami('{"session_id":""}'), null);
   assert.equal(parseWhoami("not json"), null);
+});
+
+// --- relay parsers ---------------------------------------------------------
+
+test("parseRelayIdentity: real shape", () => {
+  const json = JSON.stringify({
+    ok: true,
+    path: "/home/x/.config/c2c/identity.json",
+    public_key: "wXSGDsGE6vh9z6xBJY0int9atsVbYFvlJBwiCVeF60g",
+    fingerprint: "SHA256:NEstCw_c5DCM3pJ3CGtl1bN02rPPPd18IVERVF3ciUU",
+    alias_hint: "",
+    created_at: "2026-04-28T02:11:48Z",
+    alg: "ed25519",
+    version: 1,
+  });
+  const id = parseRelayIdentity(json);
+  assert.ok(id);
+  assert.equal(id!.publicKey, "wXSGDsGE6vh9z6xBJY0int9atsVbYFvlJBwiCVeF60g");
+  assert.equal(id!.fingerprint, "SHA256:NEstCw_c5DCM3pJ3CGtl1bN02rPPPd18IVERVF3ciUU");
+  assert.equal(id!.aliasHint, "");
+});
+
+test("parseRelayIdentity: ok=false returns null", () => {
+  const json = JSON.stringify({ ok: false, error_code: "connection_error", error: "nope" });
+  assert.equal(parseRelayIdentity(json), null);
+});
+
+test("parseRelayFingerprint: strips SHA256: prefix", () => {
+  assert.equal(parseRelayFingerprint("SHA256:abc123\n"), "abc123");
+  assert.equal(parseRelayFingerprint("abc123"), "abc123");
+});
+
+test("parseRelayRegister: real shape", () => {
+  const json = JSON.stringify({
+    ok: true,
+    result: "ok",
+    lease: {
+      node_id: "cli-pi-test-relay",
+      session_id: "cli-pi-test-relay",
+      alias: "pi-test-relay",
+      client_type: "cli",
+      registered_at: 1781636764.578273,
+      last_seen: 1781636764.578273,
+      ttl: 86400,
+      alive: true,
+      identity_pk: "wXSGDsGE6vh9z6xBJY0int9atsVbYFvlJBwiCVeF60g",
+    },
+    receipt: { sig: "x" },
+  });
+  const reg = parseRelayRegister(json);
+  assert.ok(reg);
+  assert.equal(reg!.alias, "pi-test-relay");
+  assert.equal(reg!.sessionId, "cli-pi-test-relay");
+  assert.equal(reg!.ttl, 86400);
+  assert.equal(reg!.alive, true);
+});
+
+test("parseRelayPeers: real shape", () => {
+  const json = JSON.stringify({
+    ok: true,
+    peers: [
+      {
+        node_id: "cli-pi-test-relay",
+        session_id: "cli-pi-test-relay",
+        alias: "pi-test-relay",
+        client_type: "cli",
+        registered_at: 1781636764.578273,
+        last_seen: 1781636764.578273,
+        ttl: 86400,
+        alive: true,
+        identity_pk: "wXSGDsGE6vh9z6xBJY0int9atsVbYFvlJBwiCVeF60g",
+      },
+    ],
+  });
+  const peers = parseRelayPeers(json);
+  assert.equal(peers.length, 1);
+  assert.equal(peers[0].alias, "pi-test-relay");
+  assert.equal(peers[0].alive, true);
+});
+
+test("parseRelayMessages: real shape", () => {
+  const json = JSON.stringify({
+    ok: true,
+    messages: [
+      {
+        message_id: "m1",
+        from_alias: "peer-a",
+        to_alias: "me",
+        content: "hello",
+        ts: 1781636764.671067,
+      },
+    ],
+  });
+  const msgs = parseRelayMessages(json);
+  assert.equal(msgs.length, 1);
+  assert.deepEqual(msgs[0], {
+    messageId: "m1",
+    fromAlias: "peer-a",
+    toAlias: "me",
+    content: "hello",
+    ts: 1781636764.671067,
+  });
 });
 
 // --- CLI wrapper (fake exec) ------------------------------------------------
