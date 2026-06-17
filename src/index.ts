@@ -59,7 +59,12 @@ import {
 export const PI_C2C_VERSION = "0.1.0";
 
 const STATUS_KEY = "c2c";
-const DEFAULT_POLL_INTERVAL_MS = 30_000;
+// Default to 5s. The pollTick drains 3 sources (per-repo, sessions, relay)
+// and dedups + injects. At 5s, worst-case e2e latency is ~5s + ~1s drain =
+// ~6s, down from the old 30s default which made relay messages routinely
+// take 30-45s. C2C_PI_POLL_INTERVAL_MS overrides (min 1000ms) for power
+// users; inotify push delivery is the next step (see task #35).
+const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
 const SESSION_ENV = "C2C_MCP_SESSION_ID";
 const SPOOL_DIR = path.join(os.homedir(), ".pi", "c2c");
