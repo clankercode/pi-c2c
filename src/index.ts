@@ -1086,7 +1086,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         `registered: ${registered}`,
         `poll interval: ${pollIntervalMs}ms`,
       ];
-      ctx.ui.notify(lines.join("\n"), "info");
+      await ctx.ui.select(lines.join("\n"), ["Close"]);
     },
   });
 
@@ -1131,7 +1131,8 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           })),
         queuedSinceMs,
       });
-      ctx.ui.notify(formatDebugTable(raw), "info");
+      const table = formatDebugTable(raw);
+      await ctx.ui.select(table, ["Close"]);
     },
   });
 
@@ -1150,7 +1151,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     handler: async (_args, ctx) => {
       const s = statusTracker?.getStatus();
       if (!s) return ctx.ui.notify("c2c: not registered yet (no status tracker).", "warning");
-      ctx.ui.notify(`state: ${s.state}\nsince: ${new Date(s.since).toISOString()}\nttl_ms: ${s.ttlMs}`, "info");
+      await ctx.ui.select(`state: ${s.state}\nsince: ${new Date(s.since).toISOString()}\nttl_ms: ${s.ttlMs}`, ["Close"]);
     },
   });
 
@@ -1180,7 +1181,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
               : "";
           return `${p.alive ? "●" : "○"} ${p.alias}${tagSuffix}${statusSuffix}`;
         });
-        ctx.ui.notify(lines.join("\n"), "info");
+        await ctx.ui.select(lines.join("\n"), ["Close"]);
       } catch (e) {
         ctx.ui.notify(`c2c list failed: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
@@ -1200,10 +1201,10 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         await serializeDrain(async () => {
           const combined = [...readSpool(SPOOL_DIR, sid), ...(await r.cli.pollInbox())];
           const fresh = filterNovel(combined, dedup);
-          ctx.ui.notify(
-            fresh.length ? fresh.map((m) => `${m.from_alias}: ${m.content}`).join("\n") : "(no messages)",
-            "info",
-          );
+          const content = fresh.length
+            ? fresh.map((m) => `${m.from_alias}: ${m.content}`).join("\n")
+            : "(no messages)";
+          await ctx.ui.select(content, ["Close"]);
           markDelivered(fresh, dedup);
           clearSpool(SPOOL_DIR, sid);
         });
