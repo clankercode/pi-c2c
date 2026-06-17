@@ -639,6 +639,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       // Try each transport in order until one accepts the target.
       const hops = buildSendHops({ sessionsBrokerRoot, relayRegistered: relayRegistered && !!relayAddress });
       const result = await executeSend(r.cli, hops, target, body, relayAddress);
+      details.via = result.via;
       if (result.ok) {
         const tag = nonurgent ? " (nonurgent)" : "";
         return toolText(`Sent to ${target} (via ${result.via})${tag}.`, details);
@@ -667,7 +668,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     renderShell: "self",
     async execute(_id, { body, exclude }) {
       const r = ready();
-      const details: SendToolDetails = { kind: "broadcast", body };
+      const details: SendToolDetails = { kind: "broadcast", body, via: "sessions" };
       if (!r) return toolText(notReadyText, details);
       try {
         await r.cli.sendAll(body, { exclude });
@@ -858,7 +859,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     renderShell: "self",
     async execute(_id, { room, body }) {
       const r = ready();
-      const details: SendToolDetails = { kind: "room", room, body };
+      const details: SendToolDetails = { kind: "room", room, body, via: "sessions" };
       if (!r) return toolText(notReadyText, details);
       try {
         await r.cli.sendRoom(room, body);

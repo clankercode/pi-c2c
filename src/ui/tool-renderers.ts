@@ -22,6 +22,11 @@ export interface SendToolDetails {
   /** Message body, used to render a truncated preview in the result. */
   body?: string;
   /**
+   * Which transport succeeded for a DM send (sessions, per-repo, relay).
+   * Used to pick the route glyph in the result renderer.
+   */
+  via?: "sessions" | "per-repo" | "relay";
+  /**
    * When true, the receiver uses followUp delivery (no interrupt, no
    * steer) instead of the default triggerTurn+steer. Set by the sender
    * via the c2c_pi_send tool's `nonurgent` parameter.
@@ -95,6 +100,28 @@ export function renderSendCall(args: SendToolDetails, theme: Theme): Component {
   return new Text(parts.join(""), 0, 0);
 }
 
+/** Glyph vocabulary matching the compact message renderer. */
+const GLYPHS = {
+  incoming: "▼",
+  outgoing: "▲",
+  broadcast: "✶",
+  status: "●",
+} as const;
+
+const ROUTES = {
+  local: "⌂",
+  sessions: "◎",
+  relay: "⇄",
+} as const;
+
+/** Direction + route prefix for an outgoing send result. */
+function sendPrefix(kind: SendToolDetails["kind"], via: SendToolDetails["via"], theme: Theme): string {
+  const dirGlyph = kind === "broadcast" ? GLYPHS.broadcast : GLYPHS.outgoing;
+  const dirColor: import("@earendil-works/pi-coding-agent").ThemeColor = kind === "broadcast" ? "warning" : "accent";
+  const routeGlyph = via === "relay" ? ROUTES.relay : ROUTES.sessions;
+  return `${theme.fg(dirColor, dirGlyph)}${theme.fg("borderMuted", routeGlyph)}`;
+}
+
 /** Collapse whitespace and truncate a body to a one-line preview. */
 function previewBody(body: string | undefined, maxLen = 60): string {
   if (!body) return "";
@@ -105,25 +132,27 @@ function previewBody(body: string | undefined, maxLen = 60): string {
 
 /**
  * Result shown when a send tool finishes.
- *   ◈ c2c · sent to lyra-quill · preview…
- *   ◈ c2c · broadcast sent · preview…
- *   ◈ c2c · sent to room swarm-lounge · preview…
+ *   ◈ c2c · ▲◎ → lyra-quill · preview…
+ *   ◈ c2c · ✶◎ broadcast · preview…
+ *   ◈ c2c · ▲◎ → room swarm-lounge · preview…
  */
 export function renderSendResult(details: SendToolDetails, isError: boolean, theme: Theme): Component {
   if (isError) {
     return new Text(theme.fg("error", `${INDENT_DIAMOND}◈ c2c · send error`), 0, 0);
   }
 
-  const parts: string[] = [INDENT_DIAMOND, theme.fg("accent", "◈ c2c")];
+  const parts: string[] = [INDENT_DIAMOND, theme.fg("accent", "◈ c2c"), theme.fg("borderMuted", " · ")];
+  parts.push(sendPrefix(details.kind, details.via, theme));
+
   switch (details.kind) {
     case "dm":
-      parts.push(theme.fg("success", ` sent to ${details.target ?? "unknown"}`));
+      parts.push(theme.fg("success", ` → ${details.target ?? "unknown"}`));
       break;
     case "broadcast":
-      parts.push(theme.fg("success", " broadcast sent"));
+      parts.push(theme.fg("success", " broadcast"));
       break;
     case "room":
-      parts.push(theme.fg("success", ` sent to room ${details.room ?? "unknown"}`));
+      parts.push(theme.fg("success", ` → room ${details.room ?? "unknown"}`));
       break;
   }
   const preview = previewBody(details.body);

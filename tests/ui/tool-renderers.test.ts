@@ -50,17 +50,19 @@ describe("renderSendCall", () => {
 
 describe("renderSendResult", () => {
   it("renders a DM success", () => {
-    const lines = renderSendResult({ kind: "dm", target: "lyra-quill" }, false, plainTheme).render(80);
-    assert.ok(lines[0].includes("sent to lyra-quill"));
+    const lines = renderSendResult({ kind: "dm", target: "lyra-quill", via: "sessions" }, false, plainTheme).render(80);
+    assert.ok(lines[0].includes("→ lyra-quill"));
+    assert.ok(lines[0].includes("▲"));
+    assert.ok(lines[0].includes("◎"));
   });
 
   it("renders a DM success with truncated body preview", () => {
     const lines = renderSendResult(
-      { kind: "dm", target: "lyra-quill", body: "hello world this is a fairly long message that should be truncated" },
+      { kind: "dm", target: "lyra-quill", via: "sessions", body: "hello world this is a fairly long message that should be truncated" },
       false,
       plainTheme,
     ).render(120);
-    assert.ok(lines[0].includes("sent to lyra-quill"));
+    assert.ok(lines[0].includes("→ lyra-quill"));
     assert.ok(lines[0].includes("hello world"));
     assert.ok(lines[0].includes("…"));
     assert.ok(!lines[0].includes("should be truncated"));
@@ -68,41 +70,43 @@ describe("renderSendResult", () => {
 
   it("renders a DM success with short body preview unchanged", () => {
     const lines = renderSendResult(
-      { kind: "dm", target: "lyra-quill", body: "hi" },
+      { kind: "dm", target: "lyra-quill", via: "relay", body: "hi" },
       false,
       plainTheme,
     ).render(80);
-    assert.ok(lines[0].includes("sent to lyra-quill"));
+    assert.ok(lines[0].includes("→ lyra-quill"));
     assert.ok(lines[0].includes("hi"));
+    assert.ok(lines[0].includes("⇄"));
   });
 
   it("renders a broadcast success", () => {
-    const lines = renderSendResult({ kind: "broadcast" }, false, plainTheme).render(80);
-    assert.ok(lines[0].includes("broadcast sent"));
+    const lines = renderSendResult({ kind: "broadcast", via: "sessions" }, false, plainTheme).render(80);
+    assert.ok(lines[0].includes("broadcast"));
+    assert.ok(lines[0].includes("✶"));
   });
 
   it("renders a broadcast success with body preview", () => {
     const lines = renderSendResult(
-      { kind: "broadcast", body: "all hands" },
+      { kind: "broadcast", via: "sessions", body: "all hands" },
       false,
       plainTheme,
     ).render(80);
-    assert.ok(lines[0].includes("broadcast sent"));
+    assert.ok(lines[0].includes("broadcast"));
     assert.ok(lines[0].includes("all hands"));
   });
 
   it("renders a room send success", () => {
-    const lines = renderSendResult({ kind: "room", room: "swarm-lounge" }, false, plainTheme).render(80);
-    assert.ok(lines[0].includes("sent to room swarm-lounge"));
+    const lines = renderSendResult({ kind: "room", room: "swarm-lounge", via: "sessions" }, false, plainTheme).render(80);
+    assert.ok(lines[0].includes("→ room swarm-lounge"));
   });
 
   it("renders a room send success with body preview", () => {
     const lines = renderSendResult(
-      { kind: "room", room: "swarm-lounge", body: "room message here" },
+      { kind: "room", room: "swarm-lounge", via: "sessions", body: "room message here" },
       false,
       plainTheme,
     ).render(80);
-    assert.ok(lines[0].includes("sent to room swarm-lounge"));
+    assert.ok(lines[0].includes("→ room swarm-lounge"));
     assert.ok(lines[0].includes("room message here"));
   });
 
