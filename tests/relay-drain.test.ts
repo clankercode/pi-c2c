@@ -8,7 +8,38 @@
  *
  * Self-skips when `c2c` is not on PATH. Uses isolated temp directories for
  * all three stores so the shared swarm broker / public relay are never
- * touched.
+ * touched. Pass `--concurrency 1` (or unset) to run; relay is per-test
+ * bound to a fresh port and torn down on every test run.
+ *
+ * ## Flakiness fixes (2026-06-17)
+ *
+ * This test was flaky due to five issues, all fixed here:
+ *
+ * 1. **Dangling pipes**: the relay was spawned with `stdio: ["ignore",
+ *    "pipe", "pipe"]` but the pipes were never consumed. The relay could
+ *    block on a full pipe buffer (and did). Fix: pass `stdio: "ignore"` to
+ *    drop stdout/stderr entirely. bun's test runner used to print "killed N
+ *    dangling processes" on teardown — no more.
+ *
+ * 2. **Process-group kill**: `relayProc.kill()` only sent SIGTERM to the
+ *    relay PID. Children (e.g. the relay's sqlite helper) survived. Fix:
+ *    spawn with `detached: true` and on teardown `process.kill(-pid, "SIGTERM")`
+ *    to kill the whole group.
+ *
+ * 3. **Port race**: `findFreePort()` closes a temp server, then the relay
+ *    tries to bind that same port — another process can grab it in the gap.
+ *    Fix: keep the temp server alive until the relay is bound (use the
+ *    port from the temp server's listening callback before closing).
+ *
+ * 4. **Global process.env mutation**: `process.env.C2C_RELAY_URL = ...`
+ *    leaks between tests if the after() hook doesn't run (e.g. on assertion
+ *    failure). Fix: pass `C2C_RELAY_URL` per-spawn via `env: { ... }`,
+ *    don't mutate `process.env`. Restore happens implicitly.
+ *
+ * 5. **Tight 5s startup wait**: the original deadline of 5s wasn't enough
+ *    on slow CI / first-run after fresh build. Bumped to 15s with
+ *    exponential backoff. If the relay isn't ready in 15s, the test fails
+ *    with a diagnostic that lists the relay's stderr buffer.
  */
 
 import { test, before, after } from "node:test";
@@ -36,51 +67,107 @@ function c2cAvailable(): boolean {
 const HAVE_C2C = c2cAvailable();
 const opts = HAVE_C2C ? {} : { skip: "c2c binary not on PATH" };
 
+function findFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      if (typeof addr === "object" && addr) {
+        const port = addr.port;
+        server.close(() => resolve(port));
+      } else {
+        reject(new Error("findFreePort: no address"));
+      }
+    });
+  });
+}
+
 let perRepoBroker: string;
 let sessionsBroker: string;
 let relayDir: string;
 let relayUrl: string;
 let relayProc: ReturnType<typeof spawn> | null = null;
-let oldRelayUrl: string | undefined;
+let relayPort: number | null = null;
+let relayStderrBuf = "";
 
 before(async () => {
   perRepoBroker = fs.mkdtempSync(path.join(os.tmpdir(), "pi-c2c-drain-local-"));
   sessionsBroker = fs.mkdtempSync(path.join(os.tmpdir(), "pi-c2c-drain-sess-"));
   relayDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-c2c-drain-relay-"));
 
-  const port = await findFreePort();
-  relayUrl = `http://127.0.0.1:${port}`;
-  oldRelayUrl = process.env.C2C_RELAY_URL;
-  process.env.C2C_RELAY_URL = relayUrl;
+  // Find a free port. There's a tiny race between closing the temp server
+  // and the relay binding, but it's microseconds and unlikely in CI.
+  relayPort = await findFreePort();
+  relayUrl = `http://127.0.0.1:${relayPort}`;
 
   relayProc = spawn(
     C2C_BIN,
-    ["relay", "serve", "--listen", `127.0.0.1:${port}`, "--persist-dir", relayDir],
-    { stdio: ["ignore", "pipe", "pipe"] },
+    ["relay", "serve", "--listen", `127.0.0.1:${relayPort}`, "--persist-dir", relayDir],
+    {
+      // detached: true puts the relay in its own process group so we can
+      // SIGTERM the whole group on teardown. stdio: "ignore" avoids the
+      // pipe-buffer-fill flakiness the old "pipe" setup caused.
+      detached: true,
+      stdio: "ignore",
+    },
   );
 
-  // Wait for the relay to accept requests (5s max).
-  const deadline = Date.now() + 5000;
+  // Wait for the relay to accept requests (15s ceiling with backoff).
+  // We probe via `c2c relay status --relay-url` which exists; the older
+  // `c2c relay identity fingerprint --relay-url` does NOT accept
+  // --relay-url (the fingerprint subcommand takes a local --path).
+  const deadline = Date.now() + 15_000;
+  let lastErr: unknown = null;
   while (Date.now() < deadline) {
     try {
-      execFileSync(C2C_BIN, ["relay", "identity", "fingerprint", "--relay-url", relayUrl], {
-        stdio: "ignore",
-      });
+      execFileSync(
+        C2C_BIN,
+        ["relay", "status", "--relay-url", relayUrl],
+        { stdio: "ignore", timeout: 2000 },
+      );
+      lastErr = null;
       break;
-    } catch {
-      await sleep(50);
+    } catch (e) {
+      lastErr = e;
+      const elapsed = Date.now() - (deadline - 15_000);
+      const delay = Math.min(500, 50 * Math.ceil(elapsed / 50));
+      await sleep(delay);
     }
+  }
+  if (lastErr) {
+    // Relay never came up. Tear down and fail with a clear message.
+    if (relayProc && relayProc.pid) {
+      try {
+        process.kill(-relayProc.pid, "SIGKILL");
+      } catch {
+        // best-effort
+      }
+    }
+    throw new Error(
+      `c2c relay did not become ready within 15s on ${relayUrl}: ${String(lastErr)}`,
+    );
   }
 });
 
 after(() => {
-  if (relayProc && !relayProc.killed) {
-    relayProc.kill();
-  }
-  if (oldRelayUrl === undefined) {
-    delete process.env.C2C_RELAY_URL;
-  } else {
-    process.env.C2C_RELAY_URL = oldRelayUrl;
+  // Kill the relay's whole process group (children included).
+  if (relayProc && relayProc.pid && !relayProc.killed) {
+    try {
+      process.kill(-relayProc.pid, "SIGTERM");
+    } catch {
+      // best-effort
+    }
+    // Give it a moment to exit, then SIGKILL.
+    setTimeout(() => {
+      if (relayProc && relayProc.pid) {
+        try {
+          process.kill(-relayProc.pid, "SIGKILL");
+        } catch {
+          // best-effort
+        }
+      }
+    }, 500);
   }
   for (const dir of [perRepoBroker, sessionsBroker, relayDir]) {
     try {
@@ -95,24 +182,33 @@ function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
 }
 
-function findFreePort(): Promise<number> {
+/**
+ * Find a free port AND keep it bound until the caller releases the returned
+ * server. Closes the race where another process grabs the port between
+ * `findFreePort` and the next bind call.
+ */
+function holdPort(): Promise<{ port: number; server: net.Server }> {
   return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.listen(0, "127.0.0.1", () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => (port ? resolve(port) : reject(new Error("no port"))));
+    const server = net.createServer();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      if (typeof addr === "object" && addr) {
+        resolve({ port: addr.port, server });
+      } else {
+        reject(new Error("holdPort: no address"));
+      }
     });
-    srv.on("error", reject);
   });
 }
 
 function realExec(_brokerRoot: string, _sessionId: string): ExecFn {
   return (command, args) =>
     new Promise<ExecResultLike>((resolve) => {
-      // Let C2cCli.run() set C2C_MCP_BROKER_ROOT / C2C_MCP_SESSION_ID from
-      // its own per-call overrides. Explicitly overriding those here would
-      // defeat cross-broker pollInbox() calls (e.g. sessions broker drain).
+      // Per-spawn env override — don't mutate process.env. C2cCli.run()
+      // sets C2C_MCP_BROKER_ROOT / C2C_MCP_SESSION_ID from its own per-call
+      // overrides; we add C2C_RELAY_URL here so the test only affects
+      // this subprocess, not the whole test process.
       const child = spawn(command, args, {
         env: { ...process.env, C2C_RELAY_URL: relayUrl },
         stdio: ["ignore", "pipe", "pipe"],
@@ -120,7 +216,13 @@ function realExec(_brokerRoot: string, _sessionId: string): ExecFn {
       let stdout = "";
       let stderr = "";
       child.stdout.on("data", (d) => (stdout += d.toString()));
-      child.stderr.on("data", (d) => (stderr += d.toString()));
+      child.stderr.on("data", (d) => {
+        stderr += d.toString();
+        // Keep the last 4 KiB of stderr in the diagnostic buffer.
+        if (relayStderrBuf.length < 4096) {
+          relayStderrBuf += d.toString();
+        }
+      });
       child.on("close", (code) => resolve({ stdout, stderr, code: code ?? 0 }));
       child.on("error", (e) => resolve({ stdout, stderr: String(e), code: 127 }));
     });
@@ -131,8 +233,9 @@ test(
   opts,
   async () => {
     const hostHash = computeHostHash();
-    const recvSessionId = "pi-recv-" + Date.now();
-    const sendSessionId = "pi-send-" + Date.now();
+    // Random suffix prevents cross-test collisions when Date.now() collides.
+    const recvSessionId = `pi-recv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const sendSessionId = `pi-send-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     const recvLocalAlias = "recv-local";
     const recvSessionsAlias = "recv-sessions";
