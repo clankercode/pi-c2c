@@ -38,6 +38,7 @@ import { collectDebugState } from "./debug.ts";
 import { computeHostHash, deriveRelayAlias } from "./relay.ts";
 import { buildSendHops, drainAllSources, executeSend, mergePeerLists } from "./routing.ts";
 import { BrokerWatcher, startPerRepoWatcher, startSessionsWatcher } from "./broker-watcher.ts";
+import { RelayWatcher, type RelayWatcherState } from "./relay-watcher.ts";
 import { PeerStatusStore, extractStatusMessages } from "./peer-status.ts";
 import { createStatusTracker, formatStatusEnvelope, type StatusTracker } from "./status-sync.ts";
 import { registerC2cMessageRenderer, type C2cDeliveryDetails } from "./ui/compact-message.ts";
@@ -172,6 +173,10 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   // demoting the setInterval to a long safety net. See src/broker-watcher.ts.
   let perRepoWatcher: BrokerWatcher | null = null;
   let sessionsWatcher: BrokerWatcher | null = null;
+  // Push delivery (slice 3 of push-delivery design): WebSocket-based
+  // watcher spawns `c2c relay subscribe` and fires `pollTick` on DM frames.
+  let relayWatcher: RelayWatcher | null = null;
+  let relayWsState: RelayWatcherState | undefined;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   // Safety net: poll every 60s as a fallback if the fs.watch watcher
   // misses an event (e.g. atomic file replace, network mount, etc.).
@@ -566,6 +571,20 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           // Verification is best-effort; don't fail the whole registration
           // over a list call that didn't work.
         }
+
+        // Start the relay WebSocket watcher (slice 3 of push-delivery design).
+        // Spawns `c2c relay subscribe` and fires pollTick on DM frames.
+        if (relayWatcher) relayWatcher.stop();
+        relayWatcher = new RelayWatcher({
+          alias: relayAlias,
+          relayUrl,
+          onChange: () => void pollTick(),
+          onStateChange: (state) => {
+            relayWsState = state;
+          },
+        });
+        relayWatcher.start();
+        relayWsState = relayWatcher.state;
       } catch (e: unknown) {
         relayRegistered = false;
         relayError = e instanceof Error ? e.message : String(e);
@@ -579,7 +598,8 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     // net that catches events the watcher missed (atomic file replace,
     // network mount races, etc.). Latency: 5s → ~50ms on local brokers.
     //
-    // The relay path stays poll-based (slice 2 will add WebSocket).
+    // Relay path: RelayWatcher spawns `c2c relay subscribe` and fires
+    // pollTick on WebSocket DM frames. The safety-net poll is shared.
     if (perRepoWatcher) perRepoWatcher.stop();
     // The per-repo broker root comes from C2C_MCP_BROKER_ROOT (the c2c
     // binary's C2c_repo_fp module resolves it from the git fingerprint).
@@ -625,6 +645,11 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       sessionsWatcher.stop();
       sessionsWatcher = null;
     }
+    if (relayWatcher) {
+      relayWatcher.stop();
+      relayWatcher = null;
+    }
+    relayWsState = undefined;
     if (statusTracker) {
       statusTracker.dispose();
       statusTracker = null;
@@ -684,6 +709,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         relayHostId,
         relayHostIdVerified,
         relayError,
+        relayWsState,
         peerStatusCount: peerStatusStore.size(),
         peerStatusSample: peerStatusStore
           .live()
@@ -1045,6 +1071,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       `  broker      ${registered ? "connected" : registerError ?? "not connected"}`,
       `  cross-repo  ${xrepo}`,
       `  relay       ${relay}`,
+      `  relay_ws    ${relayWsState ?? "---"}`,
       // The relay-stored opaque_host_id (verified against our local
       // host_hash after register). Shows `---` when not registered or
       // when the verification hasn't completed yet. The (verified) or
@@ -1164,6 +1191,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         relayHostId,
         relayHostIdVerified,
         relayError,
+        relayWsState,
         peerStatusCount: peerStatusStore.size(),
         peerStatusSample: peerStatusStore
           .live()

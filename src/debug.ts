@@ -33,6 +33,7 @@ export interface DebugStateInput {
   relayHostId?: string;
   relayHostIdVerified?: boolean;
   relayError?: string;
+  relayWsState?: "connected" | "reconnecting" | "stopped";
   peerStatusCount?: number;
   peerStatusSample?: Array<{ alias: string; state: string; since: number; ttlMs: number }>;
   /**
@@ -192,6 +193,7 @@ export function collectDebugState(state: DebugStateInput): string {
     `relayHostId: ${state.relayHostId ?? "(none)"}`,
     `relayHostIdVerified: ${state.relayHostIdVerified ?? false}`,
     `relayError: ${state.relayError ?? "(none)"}`,
+    `relayWsState: ${state.relayWsState ?? "---"}`,
     `peerStatusCount: ${state.peerStatusCount ?? 0}`,
     `peerStatusSample: ${JSON.stringify(state.peerStatusSample ?? [])}`,
     `queuedSinceMs: ${state.queuedSinceMs ?? "(none)"}`,

@@ -329,8 +329,8 @@ test(
     ];
     const remote: { session_id: string; alias: string; alive: boolean }[] = [];
     const relay: RelayPeer[] = [
-      { alias: "alpha#3d08761ae3f3", alive: true, host: "host-a" },
-      { alias: "beta#abc123def456", alive: true, host: "host-b" },
+      { nodeId: "n1", sessionId: "s1", alias: "alpha#3d08761ae3f3", clientType: "pi", registeredAt: 1, lastSeen: 1, ttl: 86400, alive: true, identityPk: "pk1" },
+      { nodeId: "n2", sessionId: "s2", alias: "beta#abc123def456", clientType: "pi", registeredAt: 1, lastSeen: 1, ttl: 86400, alive: true, identityPk: "pk2" },
     ];
     const merged = mergePeerLists(local, remote, relay);
 
@@ -359,7 +359,10 @@ test(
     // Start a local HTTP server that responds to the relay's poll endpoint
     // with canned DMs. This verifies the full chain: c2c binary subprocess
     // → HTTP server → stdout JSON → parseRelayMessages → RelayMessage[].
-    const port = await new Promise<number>((resolve) => {
+    const { port, close } = await new Promise<{
+      port: number;
+      close: () => Promise<void>;
+    }>((resolve) => {
       const server = http.createServer((req, res) => {
         if (req.method === "POST" && req.url === "/poll_inbox") {
           // Match the shape the real relay returns for c2c relay dm poll.
@@ -384,11 +387,16 @@ test(
       });
       server.listen(0, "127.0.0.1", () => {
         const addr = server.address();
-        if (typeof addr === "object" && addr) {
-          resolve(addr.port);
-        } else {
-          resolve(0);
-        }
+        const port = typeof addr === "object" && addr ? addr.port : 0;
+        resolve({
+          port,
+          close: () =>
+            new Promise<void>((res) => {
+              server.close(() => res());
+              // Force-close any keep-alive connections so the test exits.
+              server.closeAllConnections?.();
+            }),
+        });
       });
     });
 
@@ -417,8 +425,7 @@ test(
       assert.equal(msgs[0].messageId, "stub-1");
       assert.equal(msgs[0].ts, 1781668000);
     } finally {
-      // Clean up the server. We don't await because the test may have
-      // already cleaned up via the let above; this is best-effort.
+      await close();
     }
   },
 );
