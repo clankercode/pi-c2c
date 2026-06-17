@@ -58,6 +58,7 @@ export async function executeSend(
   target: string,
   body: string,
   relayAddress: string | undefined,
+  fromAlias?: string,
 ): Promise<SendResult | SendError> {
   let lastErr: unknown = null;
   for (const hop of hops) {
@@ -70,7 +71,7 @@ export async function executeSend(
         }
         await cli.relayDmSend(target, body, relayAddress);
       } else {
-        await cli.send(target, body, { brokerRoot: hop.root });
+        await cli.send(target, body, { brokerRoot: hop.root, from: fromAlias });
       }
       return { ok: true, via: hop.kind };
     } catch (e: unknown) {

@@ -105,8 +105,8 @@ test(
   async () => {
     const a = cli("pi-latA-" + Date.now());
     const b = cli("pi-latB-" + Date.now());
-    await a.register("pi-latA", a.sessionId);
-    await b.register("pi-latB", b.sessionId);
+    await a.register("pi-latA", a.sessionId!);
+    await b.register("pi-latB", b.sessionId!);
 
     const marker = `LAT-MARKER-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const t0 = Date.now();
@@ -130,8 +130,8 @@ test(
   async () => {
     const a = cli("pi-burstA-" + Date.now());
     const b = cli("pi-burstB-" + Date.now());
-    await a.register("pi-burstA", a.sessionId);
-    await b.register("pi-burstB", b.sessionId);
+    await a.register("pi-burstA", a.sessionId!);
+    await b.register("pi-burstB", b.sessionId!);
 
     const markers: string[] = [];
     for (let i = 0; i < 10; i++) {
@@ -154,8 +154,8 @@ test(
   async () => {
     const a = cli("pi-seqA-" + Date.now());
     const b = cli("pi-seqB-" + Date.now());
-    await a.register("pi-seqA", a.sessionId);
-    await b.register("pi-seqB", b.sessionId);
+    await a.register("pi-seqA", a.sessionId!);
+    await b.register("pi-seqB", b.sessionId!);
 
     const samples: number[] = [];
     for (let i = 0; i < 20; i++) {

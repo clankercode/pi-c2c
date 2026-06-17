@@ -643,7 +643,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       if (!r) return toolText(notReadyText, details);
       // Try each transport in order until one accepts the target.
       const hops = buildSendHops({ sessionsBrokerRoot, relayRegistered: relayRegistered && !!relayAddress });
-      const result = await executeSend(r.cli, hops, target, body, relayAddress);
+      const result = await executeSend(r.cli, hops, target, body, relayAddress, r.identity.alias);
       details.via = result.via;
       if (result.ok) {
         const tag = nonurgent ? " (nonurgent)" : "";
@@ -676,7 +676,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const details: SendToolDetails = { kind: "broadcast", body, via: "sessions" };
       if (!r) return toolText(notReadyText, details);
       try {
-        await r.cli.sendAll(body, { exclude });
+        await r.cli.sendAll(body, { exclude, from: r.identity.alias });
         return toolText("Broadcast sent.", details);
       } catch (e) {
         return toolText(`c2c_pi_send_all failed: ${e instanceof Error ? e.message : String(e)}`, details);
@@ -867,7 +867,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const details: SendToolDetails = { kind: "room", room, body, via: "sessions" };
       if (!r) return toolText(notReadyText, details);
       try {
-        await r.cli.sendRoom(room, body);
+        await r.cli.sendRoom(room, body, { from: r.identity.alias });
         return toolText(`Sent to room ${room}.`, details);
       } catch (e) {
         return toolText(`c2c_pi_send_room failed: ${e instanceof Error ? e.message : String(e)}`, details);
@@ -1192,7 +1192,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const target = m[1];
       const body = m[2];
       const hops = buildSendHops({ sessionsBrokerRoot, relayRegistered: relayRegistered && !!relayAddress });
-      const result = await executeSend(r.cli, hops, target, body, relayAddress);
+      const result = await executeSend(r.cli, hops, target, body, relayAddress, r.identity.alias);
       if (result.ok) {
         return ctx.ui.notify(`Sent to ${target} (via ${result.via}).`, "info");
       }

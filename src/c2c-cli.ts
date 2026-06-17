@@ -435,7 +435,12 @@ export class C2cCli {
   ): Promise<ExecResultLike> {
     const target = opts?.brokerRoot ?? this.brokerRoot;
     const restoreBroker = setBrokerRootEnv(target);
-    const restoreSession = setSessionIdEnv(opts?.sessionId);
+    // Default to the client's session id so send/send-all/send-room and
+    // other env-resolved commands work even when process.env was cleared
+    // by a prior call or the tool runs in a subprocess. Relay calls pass
+    // `sessionId: null` explicitly to clear it.
+    const sessionIdTarget = opts?.sessionId === undefined ? this.sessionId : opts.sessionId;
+    const restoreSession = setSessionIdEnv(sessionIdTarget);
     try {
       const res = await this.exec(this.bin, args, {
         timeout: this.timeoutMs,
