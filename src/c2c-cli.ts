@@ -639,9 +639,10 @@ export class C2cCli {
     alias: string,
     opts?: { relayUrl?: string; token?: string; signal?: AbortSignal },
   ): Promise<void> {
-    const args = ["relay", "dm", "send", "--alias", alias, "--", target, body];
+    const args = ["relay", "dm", "send", "--alias", alias];
     if (opts?.relayUrl) args.push("--relay-url", opts.relayUrl);
     if (opts?.token) args.push("--token", opts.token);
+    args.push("--", target, body);
     await this.run(args, { signal: opts?.signal, sessionId: null });
   }
 
@@ -651,9 +652,10 @@ export class C2cCli {
     alias: string,
     opts?: { relayUrl?: string; token?: string; signal?: AbortSignal },
   ): Promise<void> {
-    const args = ["relay", "dm", "send-all", "--alias", alias, "--", body];
+    const args = ["relay", "dm", "send-all", "--alias", alias];
     if (opts?.relayUrl) args.push("--relay-url", opts.relayUrl);
     if (opts?.token) args.push("--token", opts.token);
+    args.push("--", body);
     await this.run(args, { signal: opts?.signal, sessionId: null });
   }
 }
