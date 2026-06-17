@@ -40,6 +40,8 @@ import { buildSendHops, drainAllSources, executeSend, mergePeerLists } from "./r
 import { PeerStatusStore, extractStatusMessages } from "./peer-status.ts";
 import { createStatusTracker, formatStatusEnvelope, type StatusTracker } from "./status-sync.ts";
 import { registerC2cMessageRenderer, type C2cDeliveryDetails } from "./ui/compact-message.ts";
+import { createLiveDebugComponent } from "./ui/live-debug.ts";
+import { createLiveTelemetry, type LiveTelemetry, type MessageSource } from "./telemetry.ts";
 import {
   renderInboxResult,
   renderJoinRoomResult,
@@ -175,6 +177,9 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   // filtered out in `pollTick` before delivery; the recorded state is
   // surfaced via `c2c_pi_list` and `/c2c-pi-debug`.
   const peerStatusStore = new PeerStatusStore();
+  // Live telemetry for the `/c2c-live-debug` dashboard. Records counters,
+  // timestamps, and small previews without affecting the normal message path.
+  const telemetry: LiveTelemetry = createLiveTelemetry();
 
   // Cross-repo rendezvous: also register / list / send via the sessions
   // broker (`~/.c2c/sessions/broker` by default) so pi sessions in different
@@ -261,6 +266,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     } catch {
       return false;
     }
+    telemetry.recordInjected(novel.length);
     return true;
   }
 
@@ -277,6 +283,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   async function pollTick(): Promise<void> {
     if (!cli || !identity || shuttingDown) return;
     const sid = identity.sessionId;
+    telemetry.beginPoll();
     await serializeDrain(async () => {
       if (shuttingDown) return;
       // Poll both the per-repo broker and the sessions broker (when
@@ -286,14 +293,16 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const drained: C2cMessage[] = [];
       try {
         drained.push(...(await cli!.pollInbox()));
-      } catch {
-        // broker hiccup — retry next tick
+        telemetry.recordBrokerOk("local");
+      } catch (e) {
+        telemetry.recordBrokerError("local", e);
       }
       if (sessionsBrokerRoot) {
         try {
           drained.push(...(await cli!.pollInbox({ brokerRoot: sessionsBrokerRoot })));
-        } catch {
-          // sessions broker hiccup — ignore, retry next tick
+          telemetry.recordBrokerOk("sessions");
+        } catch (e) {
+          telemetry.recordBrokerError("sessions", e);
         }
       }
       // Third hop: drain the public relay for cross-machine DMs. The
@@ -306,9 +315,19 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         try {
           const relayMsgs = await cli!.relayDmPoll(relayAddress);
           for (const c of relayToC2c(relayMsgs)) drained.push(c);
-        } catch {
-          // relay hiccup — ignore, retry next tick
+          telemetry.recordRelayOk();
+        } catch (e) {
+          telemetry.recordRelayError(e);
         }
+      }
+      // Record every drained message for the live debug dashboard.
+      // Status envelopes are still tracked separately below, but we want
+      // the raw arrival count and preview in telemetry.
+      for (const m of drained) {
+        const source: MessageSource = m.from_alias?.includes("#")
+          ? "relay"
+          : "local";
+        telemetry.recordReceived({ from: m.from_alias, content: m.content, source });
       }
       // Silently track peer status envelopes: any message that parses as a
       // status envelope is recorded in `peerStatusStore` and dropped from
@@ -316,19 +335,29 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       // as a "new message" notification. They live on as a per-peer state
       // that `c2c_pi_list` and `/c2c-pi-debug` can surface.
       const { messages: deliverable } = extractStatusMessages(drained, peerStatusStore);
-      const combined = [...readSpool(SPOOL_DIR, sid), ...deliverable];
+      telemetry.recordPeerStatusCount(peerStatusStore.live().length);
+      const spooled = readSpool(SPOOL_DIR, sid);
+      telemetry.recordSpoolCount(spooled.length);
+      const combined = [...spooled, ...deliverable];
       const novel = filterNovel(combined, dedup);
       if (novel.length === 0) {
         if (combined.length > 0) clearSpool(SPOOL_DIR, sid); // already delivered
+        telemetry.endPoll();
         return;
       }
       writeSpool(SPOOL_DIR, sid, novel); // persist before injecting
-      if (shuttingDown) return; // teardown started — leave spool for next start
+      telemetry.recordSpoolCount(novel.length);
+      if (shuttingDown) {
+        telemetry.endPoll();
+        return; // teardown started — leave spool for next start
+      }
       if (inject(novel)) {
         markDelivered(novel, dedup);
         clearSpool(SPOOL_DIR, sid);
+        telemetry.recordSpoolCount(0);
       }
       // else: spool persists, dedup unmarked → retried next tick
+      telemetry.endPoll();
     });
   }
 
@@ -370,6 +399,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     ctxRef = ctx;
     shuttingDown = false;
+    telemetry.startSession();
     const gs = gstate();
     // Capture the host-provided session id ONCE, before our first write can
     // pollute it — otherwise a session switch would read our own prior write
@@ -646,6 +676,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const result = await executeSend(r.cli, hops, target, body, relayAddress);
       details.via = result.via;
       if (result.ok) {
+        telemetry.recordSent(target, result.via);
         const tag = nonurgent ? " (nonurgent)" : "";
         return toolText(`Sent to ${target} (via ${result.via})${tag}.`, details);
       }
@@ -677,6 +708,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       if (!r) return toolText(notReadyText, details);
       try {
         await r.cli.sendAll(body, { exclude });
+        telemetry.recordSent("(broadcast)", "broadcast");
         return toolText("Broadcast sent.", details);
       } catch (e) {
         return toolText(`c2c_pi_send_all failed: ${e instanceof Error ? e.message : String(e)}`, details);
@@ -868,6 +900,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       if (!r) return toolText(notReadyText, details);
       try {
         await r.cli.sendRoom(room, body);
+        telemetry.recordSent(`room:${room}`, "room");
         return toolText(`Sent to room ${room}.`, details);
       } catch (e) {
         return toolText(`c2c_pi_send_room failed: ${e instanceof Error ? e.message : String(e)}`, details);
@@ -1194,6 +1227,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const hops = buildSendHops({ sessionsBrokerRoot, relayRegistered: relayRegistered && !!relayAddress });
       const result = await executeSend(r.cli, hops, target, body, relayAddress);
       if (result.ok) {
+        telemetry.recordSent(target, result.via);
         return ctx.ui.notify(`Sent to ${target} (via ${result.via}).`, "info");
       }
       ctx.ui.notify(`c2c send failed (${result.via}): ${result.message}`, "error");
@@ -1230,6 +1264,22 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           ctx.ui.notify(`Address: ${addr}  (clipboard copy failed)`, "warning");
         }
       }
+    },
+  });
+
+  pi.registerCommand("c2c-live-debug", {
+    description: "Open a live telemetry dashboard for c2c message traffic and broker health",
+    handler: async (_args, ctx) => {
+      const component = createLiveDebugComponent(telemetry, ctx.ui.theme, {
+        identity,
+        registered,
+        relayRegistered,
+        relayAddress,
+        crossRepoEnabled,
+        crossRepoSessionsRegistered,
+        pollIntervalMs,
+      });
+      ctx.ui.custom(() => component);
     },
   });
 }
