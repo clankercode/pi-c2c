@@ -37,6 +37,7 @@ import { formatStatus, installStatusColorPatch, type PiC2cBarState } from "./sta
 import { collectDebugState } from "./debug.ts";
 import { computeHostHash, deriveRelayAlias } from "./relay.ts";
 import { buildSendHops, drainAllSources, executeSend, mergePeerLists } from "./routing.ts";
+import { BrokerWatcher, startPerRepoWatcher, startSessionsWatcher } from "./broker-watcher.ts";
 import { PeerStatusStore, extractStatusMessages } from "./peer-status.ts";
 import { createStatusTracker, formatStatusEnvelope, type StatusTracker } from "./status-sync.ts";
 import { registerC2cMessageRenderer, type C2cDeliveryDetails } from "./ui/compact-message.ts";
@@ -166,7 +167,15 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   let registered = false;
   let registerError: string | undefined;
   let ctxRef: ExtensionContext | null = null;
+  // Push delivery (slice 1 of push-delivery design): fs.watch-based
+  // watchers fire an immediate `pollTick` on broker inbox changes,
+  // demoting the setInterval to a long safety net. See src/broker-watcher.ts.
+  let perRepoWatcher: BrokerWatcher | null = null;
+  let sessionsWatcher: BrokerWatcher | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  // Safety net: poll every 60s as a fallback if the fs.watch watcher
+  // misses an event (e.g. atomic file replace, network mount, etc.).
+  const SAFETY_NET_POLL_MS = 60_000;
   let shuttingDown = false;
   const dedup = new DeliveryDedup();
   const pollIntervalMs = readPollInterval();
@@ -564,10 +573,38 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     }
 
     // Start the auto-delivery poller and do an immediate first drain.
+    //
+    // Push path: fs.watch the broker inbox files and fire `pollTick`
+    // on any change. The 5s setInterval is replaced with a 60s safety
+    // net that catches events the watcher missed (atomic file replace,
+    // network mount races, etc.). Latency: 5s → ~50ms on local brokers.
+    //
+    // The relay path stays poll-based (slice 2 will add WebSocket).
+    if (perRepoWatcher) perRepoWatcher.stop();
+    // The per-repo broker root comes from C2C_MCP_BROKER_ROOT (the c2c
+    // binary's C2c_repo_fp module resolves it from the git fingerprint).
+    // If unset, the broker hasn't been initialized yet — skip the watcher
+    // and let the safety-net pollTick catch up.
+    const perRepoBrokerRoot = process.env.C2C_MCP_BROKER_ROOT;
+    if (perRepoBrokerRoot) {
+      perRepoWatcher = startPerRepoWatcher(
+        perRepoBrokerRoot,
+        identity.sessionId,
+        () => void pollTick(),
+      );
+    }
+    if (sessionsBrokerRoot) {
+      if (sessionsWatcher) sessionsWatcher.stop();
+      sessionsWatcher = startSessionsWatcher(
+        sessionsBrokerRoot,
+        identity.sessionId,
+        () => void pollTick(),
+      );
+    }
     if (!pollTimer) {
       pollTimer = setInterval(() => {
         void pollTick();
-      }, pollIntervalMs);
+      }, SAFETY_NET_POLL_MS);
     }
     void pollTick();
   });
@@ -579,6 +616,14 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
+    }
+    if (perRepoWatcher) {
+      perRepoWatcher.stop();
+      perRepoWatcher = null;
+    }
+    if (sessionsWatcher) {
+      sessionsWatcher.stop();
+      sessionsWatcher = null;
     }
     if (statusTracker) {
       statusTracker.dispose();
