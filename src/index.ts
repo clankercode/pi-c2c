@@ -43,10 +43,12 @@ import { RelayWatcher, type RelayWatcherState } from "./relay-watcher.ts";
 import { PeerStatusStore, extractStatusMessages } from "./peer-status.ts";
 import { createStatusTracker, formatStatusEnvelope, type StatusTracker } from "./status-sync.ts";
 import { registerC2cMessageRenderer, type C2cDeliveryDetails } from "./ui/compact-message.ts";
+import { registerSubagentRegistrationRenderer } from "./ui/compact-subagent-registration.ts";
 import { createLiveDebugComponent } from "./ui/live-debug.ts";
 import { createLiveTelemetry, type LiveTelemetry, type MessageSource } from "./telemetry.ts";
 import {
   appendSubagentPromptContext,
+  buildRegistrationMessageArgs,
   getParentAlias,
   notifySubagentRegistered,
   observeSubagentRegistrations,
@@ -177,6 +179,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   const subagentHint = readSubagentLoadHint();
   const subagentParentAliasAtLoad = getParentAlias();
   registerC2cMessageRenderer(pi);
+  registerSubagentRegistrationRenderer(pi);
   // --- per-session state (single process; closure-scoped) -------------------
   const barState: PiC2cBarState = {};
   let cli: C2cCli | null = null;
@@ -503,12 +506,10 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       if (!subagentHint) {
         setParentAlias(identity.alias);
         if (!stopSubagentObserver) {
-          stopSubagentObserver = observeSubagentRegistrations((notice) => {
+          stopSubagentObserver = observeSubagentRegistrations((notice, registration) => {
             try {
-              pi.sendMessage(
-                { customType: "c2c-subagent-registration", content: notice, display: true },
-                { triggerTurn: false, deliverAs: "followUp" },
-              );
+              const args = buildRegistrationMessageArgs(notice, registration);
+              pi.sendMessage(args.message, args.options);
             } catch {
               // Best-effort: parent notices are useful but not delivery-critical.
             }

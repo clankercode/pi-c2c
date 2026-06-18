@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .worktrees/
+.plans/
 *.tsbuildinfo
 .DS_Store
 .pi/

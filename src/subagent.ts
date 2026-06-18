@@ -13,6 +13,51 @@ export interface SubagentRegistration {
   alias: string;
 }
 
+/**
+ * Structured metadata passed to the parent via `pi.sendMessage(...).details`
+ * when a subagent registers. The renderer reads this rather than parsing the
+ * model-facing `content` string. Missing `agentId` means the registration
+ * came in without a subagent-id hint (generic "Subagent").
+ */
+export interface SubagentRegistrationDetails {
+  agentId?: string;
+  alias: string;
+}
+
+/**
+ * Wire-shape builder for the subagent-registration injection. Concentrates
+ * `customType`, `display`, `details`, and delivery options in one place so
+ * the index wiring is a thin wrapper and tests can verify the shape
+ * without mocking the pi runtime.
+ */
+export interface RegistrationMessageArgs {
+  message: {
+    customType: "c2c-subagent-registration";
+    content: string;
+    display: true;
+    details: SubagentRegistrationDetails;
+  };
+  options: { triggerTurn: true; deliverAs: "steer" };
+}
+
+export function buildRegistrationMessageArgs(
+  notice: string,
+  registration: SubagentRegistration,
+): RegistrationMessageArgs {
+  return {
+    message: {
+      customType: "c2c-subagent-registration",
+      content: notice,
+      display: true,
+      details: {
+        agentId: registration.agentId,
+        alias: registration.alias,
+      },
+    },
+    options: { triggerTurn: true, deliverAs: "steer" },
+  };
+}
+
 interface SubagentGlobal {
   observers: Set<(notice: string, registration: SubagentRegistration) => void>;
   seenAliases: Set<string>;
