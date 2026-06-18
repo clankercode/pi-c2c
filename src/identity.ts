@@ -20,6 +20,7 @@ import type { C2cCli, C2cWhoami } from "./c2c-cli.ts";
 const SESSION_PREFIX = "pi-";
 const ALIAS_PREFIX = "pi-";
 const ALIAS_HASH_LEN = 6;
+const SUBAGENT_SUFFIX_LEN = 1 + 1 + ALIAS_HASH_LEN; // -a<hash6>
 
 /** Strip an alias to broker-safe characters. Empty if nothing survives. */
 export function sanitizeAlias(raw: string): string {
@@ -53,6 +54,19 @@ export function resolveAlias(opts: { configured?: string | null; sessionId: stri
   return `${ALIAS_PREFIX}${hash}`;
 }
 
+export function deriveSubagentAlias(opts: {
+  parentAlias: string;
+  agentId?: string | null;
+  sessionId: string;
+}): string {
+  const seed = (opts.agentId ?? "").trim() || opts.sessionId;
+  const hash = createHash("sha256").update(seed).digest("hex").slice(0, ALIAS_HASH_LEN);
+  const fallbackParent = resolveAlias({ sessionId: opts.sessionId });
+  const parent = sanitizeAlias(opts.parentAlias) || fallbackParent;
+  const base = parent.slice(0, Math.max(1, 64 - SUBAGENT_SUFFIX_LEN));
+  return `${base}-a${hash}`;
+}
+
 export interface IdentityInputs {
   /** pi's session id (ctx.sessionManager.getSessionId()). */
   piSessionId: string | null | undefined;
@@ -67,6 +81,11 @@ export interface IdentityInputs {
    * the session the host already established instead of inventing a new one.
    */
   sessionIdEnv?: string | null;
+  subagent?: {
+    depth: number;
+    agentId?: string;
+    parentAlias?: string | null;
+  } | null;
 }
 
 export interface Identity {
@@ -76,6 +95,17 @@ export interface Identity {
 
 /** Compute the identity (pure) without touching the broker. */
 export function computeIdentity(inputs: IdentityInputs): Identity {
+  if (inputs.subagent && inputs.subagent.depth > 0) {
+    const sessionId = deriveSessionId(inputs.piSessionId, inputs.fallbackSessionId);
+    const hintedParent = inputs.subagent.parentAlias ?? sanitizeAlias(inputs.configuredAlias ?? "");
+    const parentAlias = hintedParent || resolveAlias({ sessionId });
+    const alias = deriveSubagentAlias({
+      parentAlias,
+      agentId: inputs.subagent.agentId,
+      sessionId,
+    });
+    return { alias, sessionId };
+  }
   const ambient = inputs.sessionIdEnv?.trim();
   const sessionId = ambient ? ambient : deriveSessionId(inputs.piSessionId, inputs.fallbackSessionId);
   const alias = resolveAlias({ configured: inputs.configuredAlias, sessionId });

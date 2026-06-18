@@ -151,6 +151,22 @@ function setSessionIdEnv(target: string | null | undefined): () => void {
   };
 }
 
+let envMutationChain: Promise<void> = Promise.resolve();
+
+async function withEnvMutationLock<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = envMutationChain;
+  let release!: () => void;
+  envMutationChain = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
 // --- Pure parsers (unit-tested in isolation) --------------------------------
 
 function asString(v: unknown): string {
@@ -439,32 +455,34 @@ export class C2cCli {
     args: string[],
     opts?: { signal?: AbortSignal; brokerRoot?: string; sessionId?: string | null },
   ): Promise<ExecResultLike> {
-    const target = opts?.brokerRoot ?? this.brokerRoot;
-    const restoreBroker = setBrokerRootEnv(target);
-    // Default to the client's session id so send/send-all/send-room and
-    // other env-resolved commands work even when process.env was cleared
-    // by a prior call or the tool runs in a subprocess. Relay calls pass
-    // `sessionId: null` explicitly to clear it.
-    const sessionIdTarget = opts?.sessionId === undefined ? this.sessionId : opts.sessionId;
-    const restoreSession = setSessionIdEnv(sessionIdTarget);
-    try {
-      const res = await this.exec(this.bin, args, {
-        timeout: this.timeoutMs,
-        signal: opts?.signal,
-      });
-      if (res.code !== 0) {
-        const detail = (res.stderr || res.stdout || "").trim();
-        throw new C2cError(
-          `c2c ${args[0] ?? ""} failed (exit ${res.code}): ${detail}`,
-          res.code,
-          res.stderr,
-        );
+    return withEnvMutationLock(async () => {
+      const target = opts?.brokerRoot ?? this.brokerRoot;
+      const restoreBroker = setBrokerRootEnv(target);
+      // Default to the client's session id so send/send-all/send-room and
+      // other env-resolved commands work even when process.env was cleared
+      // by a prior call or the tool runs in a subprocess. Relay calls pass
+      // `sessionId: null` explicitly to clear it.
+      const sessionIdTarget = opts?.sessionId === undefined ? this.sessionId : opts.sessionId;
+      const restoreSession = setSessionIdEnv(sessionIdTarget);
+      try {
+        const res = await this.exec(this.bin, args, {
+          timeout: this.timeoutMs,
+          signal: opts?.signal,
+        });
+        if (res.code !== 0) {
+          const detail = (res.stderr || res.stdout || "").trim();
+          throw new C2cError(
+            `c2c ${args[0] ?? ""} failed (exit ${res.code}): ${detail}`,
+            res.code,
+            res.stderr,
+          );
+        }
+        return res;
+      } finally {
+        restoreSession();
+        restoreBroker();
       }
-      return res;
-    } finally {
-      restoreSession();
-      restoreBroker();
-    }
+    });
   }
 
   private withSession(args: string[]): string[] {

@@ -45,6 +45,14 @@ import { registerC2cMessageRenderer, type C2cDeliveryDetails } from "./ui/compac
 import { createLiveDebugComponent } from "./ui/live-debug.ts";
 import { createLiveTelemetry, type LiveTelemetry, type MessageSource } from "./telemetry.ts";
 import {
+  appendSubagentPromptContext,
+  getParentAlias,
+  notifySubagentRegistered,
+  observeSubagentRegistrations,
+  readSubagentLoadHint,
+  setParentAlias,
+} from "./subagent.ts";
+import {
   renderInboxResult,
   renderJoinRoomResult,
   renderListResult,
@@ -87,11 +95,16 @@ interface PiC2cGlobal {
   hostSessionEnvCaptured: boolean;
   hostSessionEnv: string | undefined;
   prevSessionId?: string;
+  prevSessionByScope?: Record<string, string>;
 }
 function gstate(): PiC2cGlobal {
   const g = globalThis as { __c2cPiState?: PiC2cGlobal };
   if (!g.__c2cPiState) {
-    g.__c2cPiState = { hostSessionEnvCaptured: false, hostSessionEnv: undefined };
+    g.__c2cPiState = {
+      hostSessionEnvCaptured: false,
+      hostSessionEnv: undefined,
+      prevSessionByScope: {},
+    };
   }
   return g.__c2cPiState;
 }
@@ -160,6 +173,8 @@ function readAutoJoinRooms(): string[] {
 }
 
 export default function c2cExtension(pi: ExtensionAPI): void {
+  const subagentHint = readSubagentLoadHint();
+  const subagentParentAliasAtLoad = getParentAlias();
   registerC2cMessageRenderer(pi);
   // --- per-session state (single process; closure-scoped) -------------------
   const barState: PiC2cBarState = {};
@@ -231,6 +246,12 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   // surface "this followUp has been waiting X seconds" — useful for
   // debugging the delivery delay.
   let queuedSinceMs: number | undefined;
+  let stopSubagentObserver: (() => void) | null = null;
+
+  function spoolScopeKey(id: Identity): string {
+    if (!subagentHint) return "parent";
+    return `subagent:${subagentHint.agentId ?? id.sessionId}`;
+  }
 
   // Serialize drains so the background poller and a manual `c2c_pi_poll_inbox`
   // tool never drain concurrently (which could split a batch).
@@ -408,6 +429,18 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     updateStatusFromIdleCheck();
   });
 
+  pi.on("before_agent_start", async (event) => {
+    if (!subagentHint || !identity) return;
+    const parentAlias = subagentParentAliasAtLoad ?? getParentAlias();
+    if (!parentAlias) return;
+    return {
+      systemPrompt: appendSubagentPromptContext(event.systemPrompt, {
+        selfAlias: identity.alias,
+        parentAlias,
+      }),
+    };
+  });
+
   pi.on("session_start", async (_event, ctx) => {
     ctxRef = ctx;
     shuttingDown = false;
@@ -433,35 +466,56 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     const res = await establishIdentity(cli, {
       piSessionId,
       configuredAlias: process.env.C2C_PI_ALIAS,
-      sessionIdEnv: gs.hostSessionEnv,
+      sessionIdEnv: subagentHint ? undefined : gs.hostSessionEnv,
+      subagent: subagentHint
+        ? {
+            ...subagentHint,
+            parentAlias: subagentParentAliasAtLoad ?? getParentAlias() ?? process.env.C2C_PI_ALIAS,
+          }
+        : undefined,
     });
     identity = res.identity;
     registered = res.ok;
-
-    // Export our session id so every child `c2c` invocation resolves THIS
-    // session as the caller — the broker's caller-owns-alias check then
-    // accepts our sends, and whoami/rooms resolve the right identity.
-    // (pi's exec options carry no env field, so we set it on the process.)
-    process.env[SESSION_ENV] = identity.sessionId;
 
     // On an in-process session switch our id changes; carry the previous
     // session's undelivered spool over to the new one (process-local, so we
     // never steal another live pi process's spool), then bound accumulation
     // by GC-ing week-old spool files (safe across concurrent pi processes).
-    if (gs.prevSessionId && gs.prevSessionId !== identity.sessionId) {
-      const carried = readSpool(SPOOL_DIR, gs.prevSessionId);
+    const scopeKey = spoolScopeKey(identity);
+    const prevSessionId = gs.prevSessionByScope?.[scopeKey];
+    if (prevSessionId && prevSessionId !== identity.sessionId) {
+      const carried = readSpool(SPOOL_DIR, prevSessionId);
       if (carried.length > 0) {
         writeSpool(SPOOL_DIR, identity.sessionId, [
           ...readSpool(SPOOL_DIR, identity.sessionId),
           ...carried,
         ]);
       }
-      clearSpool(SPOOL_DIR, gs.prevSessionId);
+      clearSpool(SPOOL_DIR, prevSessionId);
     }
+    if (!gs.prevSessionByScope) gs.prevSessionByScope = {};
+    gs.prevSessionByScope[scopeKey] = identity.sessionId;
     gs.prevSessionId = identity.sessionId;
     gcStaleSpools(SPOOL_DIR, SPOOL_TTL_MS, Date.now());
 
     if (res.ok) {
+      if (!subagentHint) {
+        setParentAlias(identity.alias);
+        if (!stopSubagentObserver) {
+          stopSubagentObserver = observeSubagentRegistrations((notice) => {
+            try {
+              pi.sendMessage(
+                { customType: "c2c-subagent-registration", content: notice, display: true },
+                { triggerTurn: false, deliverAs: "followUp" },
+              );
+            } catch {
+              // Best-effort: parent notices are useful but not delivery-critical.
+            }
+          });
+        }
+      } else {
+        notifySubagentRegistered({ agentId: subagentHint.agentId, alias: identity.alias });
+      }
       barState.alias = identity.alias;
       barState.registered = true;
       barState.reason = undefined;
@@ -662,6 +716,11 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     relayHostId = undefined;
     relayHostIdVerified = false;
     peerStatusStore.clear();
+    if (!subagentHint) {
+      setParentAlias(undefined);
+      stopSubagentObserver?.();
+      stopSubagentObserver = null;
+    }
   });
 
   // --- helpers for tools/commands -------------------------------------------

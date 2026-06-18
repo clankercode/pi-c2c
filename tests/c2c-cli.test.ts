@@ -400,6 +400,45 @@ test("run: per-call sessionId override is restored after invocation", async () =
   delete process.env.C2C_MCP_SESSION_ID;
 });
 
+test("run: concurrent clients see isolated env snapshots and restore the caller env", async () => {
+  process.env.C2C_MCP_SESSION_ID = "outer-session";
+  process.env.C2C_MCP_BROKER_ROOT = "outer-broker";
+  const calls: Array<{ args: string[]; env: NodeJS.ProcessEnv }> = [];
+  let releaseFirst!: () => void;
+  let first!: Promise<unknown>;
+  const firstStarted = new Promise<void>((resolve) => {
+    const exec: ExecFn = async (_command, args) => {
+      calls.push({ args, env: { ...process.env } });
+      resolve();
+      await new Promise<void>((release) => { releaseFirst = release; });
+      return { stdout: "[]", stderr: "", code: 0 };
+    };
+    first = new C2cCli({ exec, sessionId: "session-a", brokerRoot: "broker-a" }).list();
+  });
+  await firstStarted;
+
+  const exec2: ExecFn = async (_command, args) => {
+    calls.push({ args, env: { ...process.env } });
+    return { stdout: "[]", stderr: "", code: 0 };
+  };
+  const second = new C2cCli({ exec: exec2, sessionId: "session-b", brokerRoot: "broker-b" }).list();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(calls.length, 1);
+  releaseFirst();
+  await first;
+  await second;
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].env.C2C_MCP_SESSION_ID, "session-a");
+  assert.equal(calls[0].env.C2C_MCP_BROKER_ROOT, "broker-a");
+  assert.equal(calls[1].env.C2C_MCP_SESSION_ID, "session-b");
+  assert.equal(calls[1].env.C2C_MCP_BROKER_ROOT, "broker-b");
+  assert.equal(process.env.C2C_MCP_SESSION_ID, "outer-session");
+  assert.equal(process.env.C2C_MCP_BROKER_ROOT, "outer-broker");
+  delete process.env.C2C_MCP_SESSION_ID;
+  delete process.env.C2C_MCP_BROKER_ROOT;
+});
+
 // --- relayToC2c (module-level helper) ----------------------------------------
 
 import { relayToC2c } from "../src/index.ts";

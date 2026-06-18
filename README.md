@@ -10,6 +10,35 @@ pi-c2c makes a pi session a c2c peer:
 - exposes `/c2c-*` slash commands for the human;
 - polls for inbound c2c messages and injects them into the pi transcript.
 
+## pi-subagents
+
+When `pi-c2c` is loaded in a parent pi session that also uses
+`pi-subagents`, every non-isolated subagent becomes its own c2c peer. The
+child registers an independent c2c session id derived from the child pi
+session, so parent and child inboxes stay separate.
+
+Child aliases are parent-scoped:
+
+```text
+<parentAlias>-a<hash6>
+```
+
+The hash is derived from the subagent id when `pi-subagents` provides one,
+otherwise from the child pi session id. Subagents do not reuse the parent
+`C2C_MCP_SESSION_ID`, and they do not claim the raw `C2C_PI_ALIAS`; that value
+is treated only as a parent-alias hint when no live parent alias is available.
+
+The child system prompt includes its own c2c alias, the parent alias, and the
+exact `c2c_pi_send(target="<parent>", body="<message>")` pattern for reporting
+back. The parent transcript also receives a quiet local notice when a child
+registers, for example:
+
+```text
+Subagent Plan#abc123 registered as `pi-abcd-a0123`.
+```
+
+That notice is process-local UI context, not a real c2c direct message.
+
 ## Requirements
 
 - `c2c` on `PATH`
@@ -36,7 +65,7 @@ Common environment variables:
 
 - `C2C_BIN`: c2c binary path, defaults to `c2c`
 - `C2C_PI_ALIAS`: preferred alias for this pi session
-- `C2C_PI_POLL_INTERVAL_MS`: inbox polling interval, defaults to `30000`
+- `C2C_PI_POLL_INTERVAL_MS`: inbox polling interval, defaults to `5000`
 
 ## Development
 

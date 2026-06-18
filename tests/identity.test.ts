@@ -4,6 +4,7 @@ import {
   sanitizeAlias,
   deriveSessionId,
   resolveAlias,
+  deriveSubagentAlias,
   computeIdentity,
   establishIdentity,
 } from "../src/identity.ts";
@@ -58,6 +59,29 @@ test("computeIdentity: end-to-end pure derivation", () => {
 test("computeIdentity: ambient C2C_MCP_SESSION_ID is used verbatim (no pi- prefix)", () => {
   const id = computeIdentity({ piSessionId: "sess-123", sessionIdEnv: "host-session-xyz" });
   assert.equal(id.sessionId, "host-session-xyz");
+});
+
+test("computeIdentity: subagent ignores ambient session env and derives a child session id", () => {
+  const id = computeIdentity({
+    piSessionId: "child-session",
+    configuredAlias: "parent raw alias",
+    sessionIdEnv: "parent-session",
+    subagent: { depth: 1, agentId: "Plan#abc123", parentAlias: "parent-alias" },
+  });
+  assert.equal(id.sessionId, "pi-child-session");
+  assert.match(id.alias, /^parent-alias-a[0-9a-f]{6}$/);
+  assert.notEqual(id.alias, "parent-raw-alias");
+});
+
+test("deriveSubagentAlias: uses agent id when present and caps c2c alias length", () => {
+  const parent = "p".repeat(80);
+  const a1 = deriveSubagentAlias({ parentAlias: parent, agentId: "agent-1", sessionId: "pi-s1" });
+  const a2 = deriveSubagentAlias({ parentAlias: parent, agentId: "agent-1", sessionId: "pi-s2" });
+  const b = deriveSubagentAlias({ parentAlias: parent, agentId: "agent-2", sessionId: "pi-s1" });
+  assert.equal(a1.length, 64);
+  assert.equal(a1, a2);
+  assert.notEqual(a1, b);
+  assert.match(a1, /^p+-a[0-9a-f]{6}$/);
 });
 
 test("computeIdentity: blank ambient session id falls back to derived", () => {
