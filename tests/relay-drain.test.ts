@@ -51,7 +51,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { C2cCli, type ExecFn, type ExecResultLike } from "../src/c2c-cli.ts";
 import { drainAllSources } from "../src/routing.ts";
-import { computeHostHash, deriveRelayAlias } from "../src/relay.ts";
 
 const C2C_BIN = process.env.C2C_BIN ?? "c2c";
 
@@ -232,7 +231,6 @@ test(
   "drainAllSources collects messages from per-repo, sessions, and relay",
   opts,
   async () => {
-    const hostHash = computeHostHash();
     // Random suffix prevents cross-test and cross-run relay lease collisions.
     const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const recvSessionId = `pi-recv-${runId}`;
@@ -240,11 +238,11 @@ test(
 
     const recvLocalAlias = "recv-local";
     const recvSessionsAlias = "recv-sessions";
-    const recvRelayAlias = deriveRelayAlias(`recv-relay-${runId}`, hostHash);
+    const recvRelayAlias = `recv-relay-${runId}`;
 
     const sendLocalAlias = "send-local";
     const sendSessionsAlias = "send-sessions";
-    const sendRelayAlias = deriveRelayAlias(`send-relay-${runId}`, hostHash);
+    const sendRelayAlias = `send-relay-${runId}`;
 
     // Receiver: registered on all three sources.
     const recvLocal = new C2cCli({

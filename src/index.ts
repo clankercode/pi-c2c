@@ -35,6 +35,7 @@ import {
 import { clearSpool, gcStaleSpools, readSpool, writeSpool } from "./spool.ts";
 import { formatStatus, installStatusColorPatch, type PiC2cBarState } from "./status.ts";
 import { collectDebugState } from "./debug.ts";
+import { HELP_TOPICS, renderC2cPiHelp } from "./help.ts";
 import { computeHostHash, deriveRelayAlias } from "./relay.ts";
 import { buildSendHops, drainAllSources, executeSend, mergePeerLists } from "./routing.ts";
 import { BrokerWatcher, startPerRepoWatcher, startSessionsWatcher } from "./broker-watcher.ts";
@@ -732,6 +733,23 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   const notReadyText = "c2c: not registered yet (broker unreachable?). Run `/c2c-status` or `c2c doctor`.";
 
   // --- tools (LLM-callable) -------------------------------------------------
+
+  pi.registerTool({
+    name: "c2c_pi_help",
+    label: "c2c help",
+    description: "Teach a pi agent how to use pi-c2c tools, reply to inbound c2c messages, and map to generic c2c MCP/CLI concepts.",
+    parameters: Type.Object({
+      topic: Type.Optional(
+        Type.Union(
+          HELP_TOPICS.map((topic) => Type.Literal(topic)),
+          { description: "Help topic to show. Defaults to overview." },
+        ),
+      ),
+    }),
+    async execute(_id, { topic }) {
+      return toolText(renderC2cPiHelp(topic));
+    },
+  });
 
   pi.registerTool({
     name: "c2c_pi_debug",
