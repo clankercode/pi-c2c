@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   formatEnvelope,
+  isRoomMessage,
   sanitizeContent,
   messageKey,
   DeliveryDedup,
@@ -68,6 +69,35 @@ test("formatEnvelope: explicit kind='dm' overrides auto-detect for room to_alias
   const env = formatEnvelope(mk({ to_alias: "pi-abc#swarm-lounge" }), undefined, undefined, "dm");
   assert.match(env, /reply_via="c2c_pi_send"/);
   assert.match(env, /direct message from `storm`/);
+});
+
+test("formatEnvelope: relay DM (to_alias has 12-hex host hash) is NOT auto-detected as room", () => {
+  // Relay DM to_alias is `<recipient-name>#<12-hex-host-hash>` (see
+  // src/relay.ts:deriveRelayAlias). It also contains '#', but the suffix
+  // shape distinguishes it from a room delivery. Reply must be a DM
+  // (c2c_pi_send), not a room send.
+  const env = formatEnvelope(mk({ to_alias: "pi-abc#abcdef012345" }));
+  assert.match(env, /reply_via="c2c_pi_send"/);
+  assert.match(env, /direct message from `storm`/);
+  assert.doesNotMatch(env, /reply_via="c2c_pi_send_room"/);
+  assert.doesNotMatch(env, /room message/);
+});
+
+test("isRoomMessage: DM has no #", () => {
+  // Direct.
+  assert.equal(isRoomMessage(mk()), false);
+  assert.equal(isRoomMessage(mk({ to_alias: "alice" })), false);
+  assert.equal(isRoomMessage(mk({ to_alias: "" })), false);
+});
+
+test("isRoomMessage: room delivery has non-hex # suffix", () => {
+  assert.equal(isRoomMessage(mk({ to_alias: "alice#swarm-lounge" })), true);
+  assert.equal(isRoomMessage(mk({ to_alias: "alice#general" })), true);
+});
+
+test("isRoomMessage: relay DM # suffix is 12 lowercase hex chars (host hash)", () => {
+  assert.equal(isRoomMessage(mk({ to_alias: "alice#0123456789ab" })), false);
+  assert.equal(isRoomMessage(mk({ to_alias: "alice#ffffffffffff" })), false);
 });
 
 test("formatEnvelope: reminder escape — backticks/backslashes in alias", () => {
