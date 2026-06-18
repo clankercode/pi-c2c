@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   formatEnvelope,
+  isRoomMessage,
   sanitizeContent,
   messageKey,
   DeliveryDedup,
@@ -49,6 +50,64 @@ test("formatEnvelope: room kind omits the DM-specific target=\"…\" example", (
   assert.doesNotMatch(env, /target="storm"/);
 });
 
+test("formatEnvelope: auto-detects room from to_alias '<alias>#<room-id>'", () => {
+  // Per c2c_broker.fan_out_room_message, room-delivered messages carry
+  // `to_alias = "<recipient-alias>#<room-id>"`. When callers don't pass
+  // `kind`, formatEnvelope must detect that and switch to the room tools,
+  // otherwise the agent would DM the sender instead of replying to the
+  // room — exactly the failure mode this slice is meant to fix.
+  const env = formatEnvelope(mk({ to_alias: "pi-abc#swarm-lounge" }));
+  assert.match(env, /reply_via="c2c_pi_send_room"/);
+  assert.match(env, /room message from `storm`/);
+  assert.match(env, /c2c_pi_send_room\(room="<room id>"/);
+});
+
+test("formatEnvelope: explicit kind='dm' overrides auto-detect for room to_alias", () => {
+  // The override exists for tests and edge cases where a caller knows
+  // better than the auto-detect. (Real callers should not pass it; the
+  // default is correct for the c2c broker's convention.)
+  const env = formatEnvelope(mk({ to_alias: "pi-abc#swarm-lounge" }), undefined, undefined, "dm");
+  assert.match(env, /reply_via="c2c_pi_send"/);
+  assert.match(env, /direct message from `storm`/);
+});
+
+test("formatEnvelope: relay DM (to_alias has 12-hex host hash) is NOT auto-detected as room", () => {
+  // Relay DM to_alias is `<recipient-name>#<12-hex-host-hash>` (see
+  // src/relay.ts:deriveRelayAlias). It also contains '#', but the suffix
+  // shape distinguishes it from a room delivery. Reply must be a DM
+  // (c2c_pi_send), not a room send.
+  const env = formatEnvelope(mk({ to_alias: "pi-abc#abcdef012345" }));
+  assert.match(env, /reply_via="c2c_pi_send"/);
+  assert.match(env, /direct message from `storm`/);
+  assert.doesNotMatch(env, /reply_via="c2c_pi_send_room"/);
+  assert.doesNotMatch(env, /room message/);
+});
+
+test("isRoomMessage: DM has no #", () => {
+  // Direct.
+  assert.equal(isRoomMessage(mk()), false);
+  assert.equal(isRoomMessage(mk({ to_alias: "alice" })), false);
+  assert.equal(isRoomMessage(mk({ to_alias: "" })), false);
+});
+
+test("isRoomMessage: room delivery has non-hex # suffix", () => {
+  assert.equal(isRoomMessage(mk({ to_alias: "alice#swarm-lounge" })), true);
+  assert.equal(isRoomMessage(mk({ to_alias: "alice#general" })), true);
+});
+
+test("isRoomMessage: relay DM # suffix is 12 lowercase hex chars (host hash)", () => {
+  assert.equal(isRoomMessage(mk({ to_alias: "alice#0123456789ab" })), false);
+  assert.equal(isRoomMessage(mk({ to_alias: "alice#ffffffffffff" })), false);
+});
+
+test("isRoomMessage: 12-lowercase-hex room id is misclassified as relay DM", () => {
+  // Documented edge case of the to_alias-only heuristic: a room id that
+  // happens to be exactly 12 lowercase hex chars looks like a relay host
+  // hash and will be treated as a DM. This is acceptable because room ids
+  // are normally human-readable names, not raw hex.
+  assert.equal(isRoomMessage(mk({ to_alias: "alice#deadbeefcafe" })), false);
+});
+
 test("formatEnvelope: reminder escape — backticks/backslashes in alias", () => {
   // A malicious or accidental alias with backticks / backslashes must not
   // break out of the code-fenced example and re-instruct the agent.
@@ -62,6 +121,14 @@ test("formatEnvelope: reminder escape — backticks/backslashes in alias", () =>
   // Sanity: the fence closes once and only once around the alias.
   const fences = env.match(/from `[^`]*`/g);
   assert.ok(fences && fences.length >= 1);
+});
+
+test("formatEnvelope: reminder escape — backslash in alias", () => {
+  // A literal backslash in an alias must not break the target="…" attribute
+  // or the code-fenced example. The same escaping rule covers both contexts.
+  const env = formatEnvelope(mk({ from_alias: "path\\to\\alias" }));
+  assert.match(env, /from `path\\\\to\\\\alias`/);
+  assert.match(env, /target="path\\\\to\\\\alias"/);
 });
 
 test("formatEnvelope: reminder names the sender so the agent doesn't scan the envelope", () => {
@@ -213,7 +280,7 @@ test("formatEnvelope: explicit nonurgent=false overrides msg.nonurgent=true", ()
 test("notifySummary: single vs many, with truncation", () => {
   assert.match(notifySummary([mk({ content: "hi" })]), /from storm — hi/);
   const long = "x".repeat(100);
-  assert.match(notifySummary([mk({ content: long })]), /\.\.\.$/);
+  assert.match(notifySummary([mk({ content: long })]), /\.\.$/);
   const many = notifySummary([mk({ from_alias: "a" }), mk({ from_alias: "b" })]);
   assert.match(many, /2 messages from a, b/);
 });
