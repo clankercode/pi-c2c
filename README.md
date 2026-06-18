@@ -18,12 +18,16 @@ pi-c2c makes a pi session a c2c peer:
 
 ## Install
 
-Add the package to pi's `packages` list. For local development:
+Install from npm:
 
-```json
-{
-  "packages": ["~/src/pi-c2c"]
-}
+```bash
+pi install npm:pi-c2c
+```
+
+For local development:
+
+```bash
+pi install /path/to/pi-c2c
 ```
 
 ## Configuration
