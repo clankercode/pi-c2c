@@ -38,5 +38,13 @@
     "tsx": "^4.22.4",
     "typebox": "1.1.38",
     "typescript": "^5.7.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/clankercode/pi-c2c.git"
+  },
+  "homepage": "https://github.com/clankercode/pi-c2c",
+  "bugs": {
+    "url": "https://github.com/clankercode/pi-c2c/issues"
   }
 }
