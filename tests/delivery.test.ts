@@ -49,6 +49,27 @@ test("formatEnvelope: room kind omits the DM-specific target=\"…\" example", (
   assert.doesNotMatch(env, /target="storm"/);
 });
 
+test("formatEnvelope: auto-detects room from to_alias '<alias>#<room-id>'", () => {
+  // Per c2c_broker.fan_out_room_message, room-delivered messages carry
+  // `to_alias = "<recipient-alias>#<room-id>"`. When callers don't pass
+  // `kind`, formatEnvelope must detect that and switch to the room tools,
+  // otherwise the agent would DM the sender instead of replying to the
+  // room — exactly the failure mode this slice is meant to fix.
+  const env = formatEnvelope(mk({ to_alias: "pi-abc#swarm-lounge" }));
+  assert.match(env, /reply_via="c2c_pi_send_room"/);
+  assert.match(env, /room message from `storm`/);
+  assert.match(env, /c2c_pi_send_room\(room="<room id>"/);
+});
+
+test("formatEnvelope: explicit kind='dm' overrides auto-detect for room to_alias", () => {
+  // The override exists for tests and edge cases where a caller knows
+  // better than the auto-detect. (Real callers should not pass it; the
+  // default is correct for the c2c broker's convention.)
+  const env = formatEnvelope(mk({ to_alias: "pi-abc#swarm-lounge" }), undefined, undefined, "dm");
+  assert.match(env, /reply_via="c2c_pi_send"/);
+  assert.match(env, /direct message from `storm`/);
+});
+
 test("formatEnvelope: reminder escape — backticks/backslashes in alias", () => {
   // A malicious or accidental alias with backticks / backslashes must not
   // break out of the code-fenced example and re-instruct the agent.

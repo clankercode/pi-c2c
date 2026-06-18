@@ -35,6 +35,22 @@ export function sanitizeContent(content: string): string {
 }
 
 /**
+ * Determine whether a c2c inbox message is a direct message or a room
+ * message. The OCaml broker (`c2c_broker.fan_out_room_message`,
+ * `ocaml/c2c_broker.ml:3426`) tags room-delivered messages with
+ * `to_alias = "<recipient-alias>#<room-id>"` so the recipient can
+ * recognise them on drain without consulting room state. Plain DMs carry
+ * just the recipient's alias in `to_alias`.
+ *
+ * This convention is the broker's source of truth; we don't replicate
+ * it in the pi-c2c layer. When the OCaml broker changes the convention,
+ * update both this helper and the broker in lock-step.
+ */
+export function isRoomMessage(msg: C2cMessage): boolean {
+  return typeof msg.to_alias === "string" && msg.to_alias.includes("#");
+}
+
+/**
  * Build the `<system-reminder>…</system-reminder>` block that follows an
  * inbound c2c envelope. The block names the sender, gives the exact tool
  * call shape, and falls back to the generic MCP tool name so the agent
@@ -46,6 +62,13 @@ export function sanitizeContent(content: string): string {
  * fenced region and re-instruct the agent. Sender `from` is also
  * backslash-escaped to neutralise backticks and backslashes inside the
  * example literal.
+ *
+ * For room messages (`kind = "room"`), the reminder directs the agent to
+ * the room send tool. The example uses `<room id>` as a placeholder
+ * because room replies target the room, not the sender. Operators who
+ * can pipe `c2c_pi_send_room` calls into the session typically already
+ * know which room the message came from (the envelope `to=` attribute
+ * carries `<alias>#<room-id>`), so the placeholder is sufficient.
  *
  * Keep this terse. The reminder is shown verbatim inside every injected
  * c2c message — long reminders add noise that makes agents ignore them.
@@ -88,15 +111,17 @@ function buildReplyReminder(from: string, kind: "dm" | "room" = "dm"): string {
  * followUp (no interrupt, no steer), urgent messages use triggerTurn + steer.
  *
  * `kind` switches the reminder between DM (uses `c2c_pi_send`) and room
- * (uses `c2c_pi_send_room`). Default is DM for back-compat — callers that
- * know a message arrived via a room MUST pass `kind: "room"` so the
- * reminder tells the agent to call the room tool.
+ * (uses `c2c_pi_send_room`). Default behavior: auto-detect from
+ * `msg.to_alias` via `isRoomMessage` — the OCaml broker tags
+ * room-delivered messages with `<alias>#<room-id>`. Callers can pass an
+ * explicit `kind` to override the auto-detect (useful for tests and for
+ * future transports that don't follow the `<alias>#<room-id>` convention).
  */
 export function formatEnvelope(
   msg: C2cMessage,
   selfAlias?: string,
   nonurgent?: boolean,
-  kind: "dm" | "room" = "dm",
+  kind?: "dm" | "room",
 ): string {
   const from = msg.from_alias || "unknown";
   const to = msg.to_alias || selfAlias || "me";
@@ -107,12 +132,14 @@ export function formatEnvelope(
   // with our tool name). Room replies use the room tool name so a sibling
   // extension reading the attribute knows the right tool without parsing
   // the reminder block.
-  const replyVia = kind === "room" ? "c2c_pi_send_room" : "c2c_pi_send";
+  const detected: "dm" | "room" = isRoomMessage(msg) ? "room" : "dm";
+  const finalKind: "dm" | "room" = kind ?? detected;
+  const replyVia = finalKind === "room" ? "c2c_pi_send_room" : "c2c_pi_send";
   return (
     `<c2c event="message" from="${from}" to="${to}" source="broker"` +
     `${nonurgentAttr} ` +
     `reply_via="${replyVia}" action_after="continue">\n${sanitizeContent(msg.content)}\n</c2c>\n` +
-    buildReplyReminder(from, kind)
+    buildReplyReminder(from, finalKind)
   );
 }
 
