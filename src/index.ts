@@ -59,15 +59,20 @@ import {
   renderInboxResult,
   renderJoinRoomResult,
   renderListResult,
+  renderLocalInfoResult,
   renderRoomsResult,
   renderSendCall,
   renderSendResult,
+  renderStatusResult,
+  renderToolCall,
   renderWhoamiResult,
   type InboxToolDetails,
   type ListToolDetails,
+  type LocalInfoToolDetails,
   type RoomToolDetails,
   type RoomsToolDetails,
   type SendToolDetails,
+  type StatusToolDetails,
   type WhoamiToolDetails,
 } from "./ui/tool-renderers.ts";
 
@@ -828,7 +833,8 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       }
       return toolText(`c2c_pi_send failed (${result.via}): ${result.message}`, details);
     },
-    renderCall: (args, theme) => renderSendCall(args as unknown as SendToolDetails, theme),
+    renderCall: (args, theme) =>
+      renderSendCall({ kind: "dm", target: (args as { target?: string }).target }, theme),
     renderResult: (result, _options, theme, context) =>
       renderSendResult(
         (result.details as SendToolDetails) ?? (context.args as unknown as SendToolDetails),
@@ -918,6 +924,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         return toolText(`c2c_pi_list failed: ${e instanceof Error ? e.message : String(e)}`, { peers: [] } as ListToolDetails);
       }
     },
+    renderCall: (_args, theme) => renderToolCall("list peers", theme),
     renderResult: (result, _options, theme, context) =>
       renderListResult((result.details as ListToolDetails) ?? { peers: [] }, context.isError, theme),
   });
@@ -966,6 +973,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         return toolText(`c2c_pi_poll_inbox failed: ${e instanceof Error ? e.message : String(e)}`, { messages: [] } as InboxToolDetails);
       }
     },
+    renderCall: (_args, theme) => renderToolCall("poll inbox", theme),
     renderResult: (result, _options, theme, context) =>
       renderInboxResult((result.details as InboxToolDetails) ?? { messages: [] }, context.isError, theme),
   });
@@ -988,6 +996,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         details,
       );
     },
+    renderCall: (_args, theme) => renderToolCall("whoami", theme),
     renderResult: (result, _options, theme, context) =>
       renderWhoamiResult((result.details as WhoamiToolDetails) ?? { alias: "", sessionId: "", registered: false }, context.isError, theme),
   });
@@ -1000,10 +1009,16 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     renderShell: "self",
     async execute() {
       const s = statusTracker?.getStatus();
-      if (!s) return toolText("c2c: not registered yet (no status tracker).");
+      if (!s) return toolText("c2c: not registered yet (no status tracker).", { registered: false } as StatusToolDetails);
       const sinceIso = new Date(s.since).toISOString();
-      return toolText(`state: ${s.state}\nsince: ${sinceIso}\nttl_ms: ${s.ttlMs}`);
+      return toolText(
+        `state: ${s.state}\nsince: ${sinceIso}\nttl_ms: ${s.ttlMs}`,
+        { state: s.state, since: sinceIso, ttlMs: s.ttlMs, registered: true } as StatusToolDetails,
+      );
     },
+    renderCall: (_args, theme) => renderToolCall("status", theme),
+    renderResult: (result, _options, theme, context) =>
+      renderStatusResult((result.details as StatusToolDetails) ?? { registered: false }, context.isError, theme),
   });
 
   pi.registerTool({
@@ -1023,6 +1038,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         return toolText(`c2c_pi_join_room failed: ${e instanceof Error ? e.message : String(e)}`, details);
       }
     },
+    renderCall: (args, theme) => renderToolCall(`join room ${(args as { room?: string }).room ?? "unknown"}`, theme),
     renderResult: (result, _options, theme, context) =>
       renderJoinRoomResult(
         (result.details as RoomToolDetails) ?? { room: (context.args as { room: string }).room },
@@ -1069,7 +1085,15 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     renderShell: "self",
     async execute() {
       const r = ready();
-      if (!r) return toolText(notReadyText);
+      if (!r) {
+        return toolText(notReadyText, {
+          alias: "(not registered)",
+          sessionId: "(none)",
+          broker: "not connected",
+          crossRepo: "unknown",
+          relay: "unknown",
+        } as LocalInfoToolDetails);
+      }
 
       const info = await buildLocalInfoText();
       const addr = relayRegistered ? relayAddress : undefined;
@@ -1084,8 +1108,15 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         );
       }
 
-      return toolText(parts.join("\n"));
+      return toolText(parts.join("\n"), buildLocalInfoDetails());
     },
+    renderCall: (_args, theme) => renderToolCall("local info", theme),
+    renderResult: (result, _options, theme, context) =>
+      renderLocalInfoResult(
+        (result.details as LocalInfoToolDetails) ?? buildLocalInfoDetails(),
+        context.isError,
+        theme,
+      ),
   });
 
   pi.registerTool({
@@ -1105,6 +1136,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         return toolText(`c2c_pi_rooms failed: ${e instanceof Error ? e.message : String(e)}`, { rooms: [] } as RoomsToolDetails);
       }
     },
+    renderCall: (_args, theme) => renderToolCall("list rooms", theme),
     renderResult: (result, _options, theme, context) =>
       renderRoomsResult((result.details as RoomsToolDetails) ?? { rooms: [] }, context.isError, theme),
   });
@@ -1173,6 +1205,34 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     }
 
     return lines.join("\n");
+  }
+
+  function buildLocalInfoDetails(): LocalInfoToolDetails {
+    const alias = identity?.alias ?? "(not registered)";
+    const sessionId = identity?.sessionId ?? "(none)";
+    const xrepo = crossRepoEnabled
+      ? crossRepoSessionsRegistered
+        ? "connected"
+        : crossRepoSessionsError
+          ? `error: ${crossRepoSessionsError}`
+          : "not connected"
+      : "disabled";
+    const relay = !relayEnabled
+      ? "disabled"
+      : relayRegistered
+        ? "connected"
+        : relayError
+          ? `error: ${relayError}`
+          : "not connected";
+
+    return {
+      alias,
+      sessionId,
+      broker: registered ? "connected" : registerError ?? "not connected",
+      crossRepo: xrepo,
+      relay,
+      address: relayRegistered ? relayAddress : undefined,
+    };
   }
 
   /**

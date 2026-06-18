@@ -10,7 +10,7 @@ import { Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
-const INDENT_C2C = "⧓";
+const INDENT_C2C = " ";
 const INDENT_CHILD = "   ";
 
 // ── detail types (consumed by the extension for tool execute return) ───────────
@@ -70,31 +70,60 @@ export interface RoomsToolDetails {
   rooms: string[];
 }
 
+export interface StatusToolDetails {
+  state?: string;
+  since?: string;
+  ttlMs?: number;
+  registered: boolean;
+}
+
+export interface LocalInfoToolDetails {
+  alias: string;
+  sessionId: string;
+  broker: string;
+  crossRepo: string;
+  relay: string;
+  address?: string;
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function peerIndicator(alive: boolean, theme: Theme): string {
   return alive ? theme.fg("success", "●") : theme.fg("muted", "○");
 }
 
+function c2cPrefix(theme: Theme): string {
+  return INDENT_C2C + theme.fg("accent", "⧓ c2c");
+}
+
+function c2cLead(theme: Theme): string {
+  return c2cPrefix(theme) + theme.fg("borderMuted", " · ");
+}
+
+export function renderToolCall(action: string, theme: Theme): Component {
+  return new Text(c2cLead(theme) + theme.fg("text", action), 0, 0);
+}
+
 // ── Send tools (c2c_pi_send, c2c_pi_send_all, c2c_pi_send_room) ───────────────────────
 
 /**
  * One-line preview shown while a send tool is executing.
- *   ⧓ c2c · send → lyra-quill
- *   ⧓ c2c · broadcast
- *   ⧓ c2c · send to room swarm-lounge
+ *    ⧓ c2c · send → lyra-quill
+ *    ⧓ c2c · broadcast
+ *    ⧓ c2c · send to room swarm-lounge
  */
-export function renderSendCall(args: SendToolDetails, theme: Theme): Component {
-  const parts: string[] = [INDENT_C2C, theme.fg("accent", "⧓ c2c")];
-  switch (args.kind) {
+export function renderSendCall(args: Partial<SendToolDetails>, theme: Theme): Component {
+  const kind = args.kind ?? (args.room ? "room" : args.target ? "dm" : "broadcast");
+  const parts: string[] = [c2cLead(theme)];
+  switch (kind) {
     case "dm":
-      parts.push(theme.fg("text", ` send → ${args.target ?? "unknown"}`));
+      parts.push(theme.fg("text", `send → ${args.target ?? "unknown"}`));
       break;
     case "broadcast":
-      parts.push(theme.fg("text", " broadcast"));
+      parts.push(theme.fg("text", "broadcast"));
       break;
     case "room":
-      parts.push(theme.fg("text", ` send to room ${args.room ?? "unknown"}`));
+      parts.push(theme.fg("text", `send to room ${args.room ?? "unknown"}`));
       break;
   }
   return new Text(parts.join(""), 0, 0);
@@ -132,16 +161,16 @@ function previewBody(body: string | undefined, maxLen = 60): string {
 
 /**
  * Result shown when a send tool finishes.
- *   ⧓ c2c · ▲◎ → lyra-quill · preview…
- *   ⧓ c2c · ✶◎ broadcast · preview…
- *   ⧓ c2c · ▲◎ → room swarm-lounge · preview…
+ *    ⧓ c2c · ▲◎ → lyra-quill · preview…
+ *    ⧓ c2c · ✶◎ broadcast · preview…
+ *    ⧓ c2c · ▲◎ → room swarm-lounge · preview…
  */
 export function renderSendResult(details: SendToolDetails, isError: boolean, theme: Theme): Component {
   if (isError) {
-    return new Text(theme.fg("error", `${INDENT_C2C}⧓ c2c · send error`), 0, 0);
+    return new Text(c2cLead(theme) + theme.fg("error", "send error"), 0, 0);
   }
 
-  const parts: string[] = [INDENT_C2C, theme.fg("accent", "⧓ c2c"), theme.fg("borderMuted", " · ")];
+  const parts: string[] = [c2cLead(theme)];
   parts.push(sendPrefix(details.kind, details.via, theme));
 
   switch (details.kind) {
@@ -167,22 +196,20 @@ export function renderSendResult(details: SendToolDetails, isError: boolean, the
 
 /**
  * Result for c2c_pi_list.
- *   ⧓ c2c · peers (3)
+ *    ⧓ c2c · peers (3)
  *      ● alias-one
  *      ● alias-two  [cross-repo]
  *      ○ alias-three
  */
 export function renderListResult(details: ListToolDetails, isError: boolean, theme: Theme): Component {
   if (isError) {
-    return new Text(theme.fg("error", `${INDENT_C2C}⧓ c2c · peers error`), 0, 0);
+    return new Text(c2cLead(theme) + theme.fg("error", "peers error"), 0, 0);
   }
 
   const peers = details.peers ?? [];
   const container = new Container();
   const header = new Text(
-    INDENT_C2C +
-      theme.fg("accent", "⧓ c2c") +
-      theme.fg("borderMuted", " · ") +
+    c2cLead(theme) +
       theme.fg("text", "peers") +
       (peers.length > 0 ? theme.fg("muted", ` (${peers.length})`) : ""),
     0, 0,
@@ -230,7 +257,7 @@ function statusColor(state: string): import("@earendil-works/pi-coding-agent").T
 
 /**
  * Result for c2c_pi_poll_inbox.
- *   ⧓ c2c · inbox (2)
+ *    ⧓ c2c · inbox (2)
  *      lyra-quill: preview...
  *      other: preview...
  */
@@ -240,15 +267,13 @@ export function renderInboxResult(
   theme: Theme,
 ): Component {
   if (isError) {
-    return new Text(theme.fg("error", `${INDENT_C2C}⧓ c2c · inbox error`), 0, 0);
+    return new Text(c2cLead(theme) + theme.fg("error", "inbox error"), 0, 0);
   }
 
   const messages = details.messages ?? [];
   const container = new Container();
   const header = new Text(
-    INDENT_C2C +
-      theme.fg("accent", "⧓ c2c") +
-      theme.fg("borderMuted", " · ") +
+    c2cLead(theme) +
       theme.fg("text", "inbox") +
       (messages.length > 0 ? theme.fg("muted", ` (${messages.length})`) : ""),
     0, 0,
@@ -272,7 +297,7 @@ export function renderInboxResult(
 
 /**
  * Result for c2c_pi_whoami.
- *   ⧓ c2c · alias (session-id) · registered
+ *    ⧓ c2c · alias (session-id) · registered
  */
 export function renderWhoamiResult(
   details: WhoamiToolDetails,
@@ -280,16 +305,14 @@ export function renderWhoamiResult(
   theme: Theme,
 ): Component {
   if (isError) {
-    return new Text(theme.fg("error", `${INDENT_C2C}⧓ c2c · whoami error`), 0, 0);
+    return new Text(c2cLead(theme) + theme.fg("error", "whoami error"), 0, 0);
   }
 
   const status = details.registered
     ? theme.fg("success", "registered")
     : theme.fg("warning", "not registered");
   const line =
-    INDENT_C2C +
-    theme.fg("accent", "⧓ c2c") +
-    theme.fg("borderMuted", " · ") +
+    c2cLead(theme) +
     theme.fg("text", details.alias) +
     theme.fg("muted", ` (${details.sessionId})`) +
     theme.fg("borderMuted", " · ") +
@@ -302,7 +325,7 @@ export function renderWhoamiResult(
 
 /**
  * Result for c2c_pi_join_room.
- *   ⧓ c2c · joined room swarm-lounge
+ *    ⧓ c2c · joined room swarm-lounge
  */
 export function renderJoinRoomResult(
   details: RoomToolDetails,
@@ -310,13 +333,12 @@ export function renderJoinRoomResult(
   theme: Theme,
 ): Component {
   if (isError) {
-    return new Text(theme.fg("error", `${INDENT_C2C}⧓ c2c · join room error`), 0, 0);
+    return new Text(c2cLead(theme) + theme.fg("error", "join room error"), 0, 0);
   }
 
   const line =
-    INDENT_C2C +
-    theme.fg("accent", "⧓ c2c") +
-    theme.fg("success", " joined") +
+    c2cLead(theme) +
+    theme.fg("success", "joined") +
     theme.fg("borderMuted", " room ") +
     theme.fg("text", details.room);
 
@@ -327,7 +349,7 @@ export function renderJoinRoomResult(
 
 /**
  * Result for c2c_pi_rooms.
- *   ⧓ c2c · rooms (2)
+ *    ⧓ c2c · rooms (2)
  *      swarm-lounge
  *      ops
  */
@@ -337,15 +359,13 @@ export function renderRoomsResult(
   theme: Theme,
 ): Component {
   if (isError) {
-    return new Text(theme.fg("error", `${INDENT_C2C}⧓ c2c · rooms error`), 0, 0);
+    return new Text(c2cLead(theme) + theme.fg("error", "rooms error"), 0, 0);
   }
 
   const rooms = details.rooms ?? [];
   const container = new Container();
   const header = new Text(
-    INDENT_C2C +
-      theme.fg("accent", "⧓ c2c") +
-      theme.fg("borderMuted", " · ") +
+    c2cLead(theme) +
       theme.fg("text", "rooms") +
       (rooms.length > 0 ? theme.fg("muted", ` (${rooms.length})`) : ""),
     0, 0,
@@ -361,5 +381,56 @@ export function renderRoomsResult(
     container.addChild(new Text(INDENT_CHILD + theme.fg("text", room), 0, 0));
   }
 
+  return container;
+}
+
+// ── c2c_pi_status / c2c_pi_local_info ─────────────────────────────────────────
+
+export function renderStatusResult(
+  details: StatusToolDetails,
+  isError: boolean,
+  theme: Theme,
+): Component {
+  if (isError) {
+    return new Text(c2cLead(theme) + theme.fg("error", "status error"), 0, 0);
+  }
+  if (!details.registered || !details.state) {
+    return new Text(c2cLead(theme) + theme.fg("warning", "not registered"), 0, 0);
+  }
+  return new Text(
+    c2cLead(theme) +
+      theme.fg(statusColor(details.state), details.state) +
+      theme.fg("borderMuted", " · ttl ") +
+      theme.fg("muted", `${details.ttlMs ?? "?"}ms`),
+    0,
+    0,
+  );
+}
+
+export function renderLocalInfoResult(
+  details: LocalInfoToolDetails,
+  isError: boolean,
+  theme: Theme,
+): Component {
+  if (isError) {
+    return new Text(c2cLead(theme) + theme.fg("error", "local info error"), 0, 0);
+  }
+
+  const container = new Container();
+  container.addChild(
+    new Text(
+      c2cLead(theme) +
+        theme.fg("text", details.alias) +
+        theme.fg("muted", ` (${details.sessionId})`),
+      0,
+      0,
+    ),
+  );
+  container.addChild(new Text(INDENT_CHILD + theme.fg("text", "broker ") + theme.fg("muted", details.broker), 0, 0));
+  container.addChild(new Text(INDENT_CHILD + theme.fg("text", "cross-repo ") + theme.fg("muted", details.crossRepo), 0, 0));
+  container.addChild(new Text(INDENT_CHILD + theme.fg("text", "relay ") + theme.fg("muted", details.relay), 0, 0));
+  if (details.address) {
+    container.addChild(new Text(INDENT_CHILD + theme.fg("text", "address ") + theme.fg("accent", details.address), 0, 0));
+  }
   return container;
 }
