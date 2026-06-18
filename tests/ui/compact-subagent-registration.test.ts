@@ -39,7 +39,7 @@ function makeMessage(
 }
 
 describe("buildCompactLine", () => {
-  it("uses the subagent kind slot (distinct from c2c)", () => {
+  it("uses the c2c compact prefix with a subagent kind slot", () => {
     const line = buildCompactLine(
       makeMessage("Subagent Plan#abc123 registered as `parent-a123456`.", {
         agentId: "Plan#abc123",
@@ -48,8 +48,7 @@ describe("buildCompactLine", () => {
       plainTheme,
       120,
     );
-    assert.match(line, /⧓ subagent/);
-    assert.doesNotMatch(line, /⧓ c2c/);
+    assert.match(line, /^ ⧓ c2c · subagent · ↳ Plan#abc123 → parent-a123456$/);
   });
 
   it("renders agent id, fork glyph, mapping arrow, and alias when agentId is set", () => {
@@ -109,7 +108,7 @@ describe("buildExpandedComponent", () => {
     );
     const lines = component.render(120);
     const joined = lines.join("\n");
-    assert.match(joined, /⧓ subagent · ↳ registered/);
+    assert.match(joined, / ⧓ c2c · subagent · ↳ registered/);
     assert.match(joined, /› agent id: Plan#abc123/);
     assert.match(joined, /› alias: +parent-a123456/);
     assert.match(joined, /› Subagent Plan#abc123 registered as `parent-a123456`\./);
@@ -175,13 +174,13 @@ describe("fallback when details are missing", () => {
     );
     assert.match(line, /Plan#abc123/);
     assert.match(line, /parent-a123456/);
-    assert.match(line, /⧓ subagent/);
+    assert.match(line, /^ ⧓ c2c · subagent · ↳ Plan#abc123 → parent-a123456$/);
   });
 
   it("renders a safe muted fallback for non-canonical content", () => {
     const weird = { content: "[corrupted entry]" };
     const line = buildCompactLine(weird, plainTheme, 120);
-    assert.match(line, /⧓ subagent · ↳ \[corrupted entry\]/);
+    assert.match(line, / ⧓ c2c · subagent · ↳ \[corrupted entry\]/);
     // No throw.
     assert.ok(line.length > 0);
   });
@@ -217,7 +216,7 @@ describe("PI_C2C_ASCII=1 fallback", () => {
         120,
       ),
     );
-    assert.match(line, /o subagent/);
+    assert.match(line, / o c2c \. subagent \. -> Plan#abc123/);
     // Fork glyph: ->
     assert.match(line, /-> Plan#abc123/);
     // Mapping glyph: => (NOT ->, so it stays distinct from the fork glyph)
@@ -237,7 +236,7 @@ describe("PI_C2C_ASCII=1 fallback", () => {
       ),
     );
     const joined = component.render(120).join("\n");
-    assert.match(joined, /o subagent/);
+    assert.match(joined, / o c2c \. subagent/);
     assert.doesNotMatch(joined, /[⧓↳→·›]/);
   });
 });

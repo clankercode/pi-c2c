@@ -2,7 +2,7 @@
  * Compact TUI renderer for subagent-registration notices.
  *
  * Collapses a registration into a single line:
- *   ⧓ subagent · ↳ Plan#abc123 → parent-a123456
+ *    ⧓ c2c · subagent · ↳ Plan#abc123 → parent-a123456
  * Expands to a small block with the agent id, alias, and the model-facing
  * sentence so the human can inspect details on demand.
  *
@@ -22,6 +22,7 @@ const KIND = "c2c-subagent-registration";
 /** Glyph vocabulary. All glyphs have ASCII fallbacks via `PI_C2C_ASCII=1`. */
 const GLYPHS = {
   container: "⧓",
+  channel: "c2c",
   kind: "subagent",
   separator: " · ",
   fork: "↳",
@@ -32,6 +33,7 @@ const GLYPHS = {
 
 const ASCII_GLYPHS = {
   container: "o",
+  channel: "c2c",
   kind: "subagent",
   separator: " . ",
   fork: "->",
@@ -48,11 +50,14 @@ function pickGlyphs() {
   return useAsciiGlyphs() ? ASCII_GLYPHS : GLYPHS;
 }
 
-/** Build the colored `⧓ subagent · ↳ ` header prefix. */
+/** Build the colored ` ⧓ c2c · subagent · ↳ ` header prefix. */
 function buildPrefix(theme: Theme): string {
   const g = pickGlyphs();
   return (
-    theme.fg("accent", `${g.container} ${g.kind}`) +
+    " " +
+    theme.fg("accent", `${g.container} ${g.channel}`) +
+    theme.fg("borderMuted", g.separator) +
+    theme.fg("muted", g.kind) +
     theme.fg("borderMuted", g.separator) +
     theme.fg("accent", `${g.fork} `)
   );
@@ -159,7 +164,10 @@ export function buildExpandedComponent(
   const g = pickGlyphs();
   const container = new Container();
   const header =
-    theme.fg("accent", `${g.container} ${g.kind}`) +
+    " " +
+    theme.fg("accent", `${g.container} ${g.channel}`) +
+    theme.fg("borderMuted", g.separator) +
+    theme.fg("muted", g.kind) +
     theme.fg("borderMuted", g.separator) +
     theme.fg("accent", `${g.fork} `) +
     theme.fg("accent", g.registered);
