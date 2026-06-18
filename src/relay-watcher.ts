@@ -3,7 +3,7 @@
  *
  * Spawns `c2c relay subscribe --alias <alias> --relay-url <url>` as a child
  * process and watches its stdout for JSON lines. Each line is a DM frame:
- *   { "op": "dm", "from": "sender#hash", "body": "...", "ts": 1234 }
+ *   { "op": "dm", "from": "sender@hash", "body": "...", "ts": 1234 }
  *
  * On receiving a frame, fires `onChange()` — identical to how BrokerWatcher
  * fires `onChange()` on file changes. The actual draining is done by
@@ -33,7 +33,7 @@ export type OnChange = () => void;
 export type RelayWatcherState = "connected" | "reconnecting" | "stopped";
 
 export interface RelayWatcherOptions {
-  /** The relay alias (e.g. "pi-abc#3d08761ae3f3"). */
+  /** The relay alias/address (e.g. "pi-abc@3d08761ae3f3"). */
   alias: string;
   /** The relay URL (e.g. "https://relay.c2c.im"). */
   relayUrl: string;

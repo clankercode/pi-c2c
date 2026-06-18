@@ -338,9 +338,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       // Status envelopes are still tracked separately below, but we want
       // the raw arrival count and preview in telemetry.
       for (const m of drained) {
-        const source: MessageSource = m.from_alias?.includes("#")
-          ? "relay"
-          : "local";
+        const source: MessageSource = m.source === "relay" ? "relay" : "local";
         telemetry.recordReceived({ from: m.from_alias, content: m.content, source });
       }
       // Silently track peer status envelopes: any message that parses as a
@@ -548,10 +546,9 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         relayError = undefined;
         // The relay stores our opaque_host_id in the lease (c2c slice 1 of
         // the opaque_host_id design). Use it if present; otherwise fall back
-        // to the alias suffix for back-compat with relays that don't yet
-        // return the field.
-        relayHostId = reg?.opaqueHostId ?? relayAlias.split("#")[1];
-        relayHostIdVerified = reg?.opaqueHostId === hostHash;
+        // to the address host part.
+        relayHostId = reg?.opaqueHostId ?? relayAlias.split("@")[1];
+        relayHostIdVerified = relayHostId === hostHash;
         // Sanity-check via relay list that the stored id matches what we
         // sent. This catches env-var drift, relay API changes, and recipe
         // mismatches early.
@@ -559,7 +556,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           const peers = await cli!.relayList();
           const self = peers.find((p) => p.alias === relayAlias);
           if (self) {
-            const suffix = self.alias.split("#")[1];
+            const suffix = self.opaqueHostId ?? self.alias.split("@")[1];
             if (suffix && suffix !== hostHash) {
               relayHostIdVerified = false;
               relayError = `opaque_host_id mismatch: local=${hostHash} relay=${suffix}`;
@@ -811,7 +808,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           ? await r.cli.list({ brokerRoot: sessionsBrokerRoot }).catch(() => [])
           : [];
         // Public relay list (when registered). Relay peers use the
-        // `<alias>#<host_hash>` format — we keep the full alias as the
+        // `<alias>@<host_hash>` format — we keep the full address as the
         // dedup key so the LLM can DM them via `c2c_pi_send` (which now
         // falls through to `c2c relay dm send`).
         const relayPeers = relayRegistered
@@ -1376,6 +1373,8 @@ export function relayToC2c(msgs: RelayMessage[]): C2cMessage[] {
       to_alias: m.toAlias,
       content: m.content,
       ts: m.ts,
+      source: "relay",
+      kind: "dm",
     });
   }
   return out;

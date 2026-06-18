@@ -31,7 +31,7 @@
  *   product_uuid alone is ~128 bits (16 random bytes from the SMBIOS spec);
  *   collision probability at 1M hosts is ~10⁻²⁴. Sufficient.
  *
- *   The relay alias format becomes `<name>#<host_hash>` — opaque to outsiders
+ *   The relay address format becomes `<name>@<host_hash>` — opaque to outsiders
  *   but the extension can reverse it locally (it knows the inputs).
  *
  * Configuration env vars:
@@ -110,7 +110,7 @@ export function computeHostHash(
 }
 
 /**
- * Build the relay-facing alias. Format: `pi-<name>#<host_hash>`.
+ * Build the relay-facing address. Format: `<name>@<host_hash>`.
  *
  *   - `name` is the bare alias (e.g. `pi-c01ea5`)
  *   - `host_hash` is the 12-hex hash from `computeHostHash`
@@ -130,7 +130,7 @@ export function deriveRelayAlias(name: string, hostHash: string): string {
   if (!/^[0-9a-f]{12}$/.test(hostHash)) {
     throw new Error(`deriveRelayAlias: invalid hostHash '${hostHash}' (must be 12 hex chars)`);
   }
-  return `${name}#${hostHash}`;
+  return `${name}@${hostHash}`;
 }
 
 /**
@@ -139,7 +139,7 @@ export function deriveRelayAlias(name: string, hostHash: string): string {
  * per-repo views.
  */
 export function parseRelayAlias(alias: string): { name: string; hostHash: string } | null {
-  const i = alias.indexOf("#");
+  const i = alias.indexOf("@");
   if (i < 0) return null;
   const name = alias.slice(0, i);
   const hostHash = alias.slice(i + 1);

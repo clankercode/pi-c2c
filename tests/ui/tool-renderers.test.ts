@@ -135,12 +135,12 @@ describe("renderListResult", () => {
   it("renders relay peers with [relay] tag", () => {
     const details: ListToolDetails = {
       peers: [
-        { alias: "remote#a3b2c1d4e5f6", alive: true, tag: "relay" },
+        { alias: "remote@a3b2c1d4e5f6", alive: true, tag: "relay" },
       ],
     };
     const lines = renderListResult(details, false, plainTheme).render(80);
     const joined = lines.join("\n");
-    assert.ok(joined.includes("remote#a3b2c1d4e5f6"));
+    assert.ok(joined.includes("remote@a3b2c1d4e5f6"));
     assert.ok(joined.includes("[relay]"));
     assert.ok(!joined.includes("[cross-repo]"));
   });
@@ -290,15 +290,15 @@ function renderOne(content: string, selfAlias: string, details?: Partial<C2cDeli
 
 describe("buildCompactLine: route color coding", () => {
   // NOTE: the renderer derives the route from the alias alone
-  // (`routeForAlias`: has-# → relay, default → sessions). It cannot
+  // (`routeForAlias`: has-@ → relay, default → sessions). It cannot
   // distinguish local from sessions without extra context. The "local"
   // branch of buildPrefix is reserved for when the extension starts
   // passing per-message route info in details; until then it is dead
   // code. We only test the two reachable routes here.
 
-  it("relay route (alias contains #) renders route in accent color", () => {
+  it("relay route (alias matches alias@12hex) renders route in accent color", () => {
     const { events } = renderOne(
-      "<c2c event=\"message\" from=\"peer#a3b2c1d4e5f6\">hi</c2c>",
+      "<c2c event=\"message\" from=\"peer@a3b2c1d4e5f6\">hi</c2c>",
       "me",
     );
     const routeEvents = events.filter((e) => e.text === "⇄");
@@ -306,7 +306,7 @@ describe("buildCompactLine: route color coding", () => {
     assert.equal(routeEvents[0].color, "accent");
   });
 
-  it("sessions route (alias without #) renders route in borderMuted", () => {
+  it("sessions route (alias does not match relay address) renders route in borderMuted", () => {
     const { events } = renderOne(
       "<c2c event=\"message\" from=\"someone\">hi</c2c>",
       "me",

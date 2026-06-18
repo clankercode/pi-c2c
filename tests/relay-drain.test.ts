@@ -233,17 +233,18 @@ test(
   opts,
   async () => {
     const hostHash = computeHostHash();
-    // Random suffix prevents cross-test collisions when Date.now() collides.
-    const recvSessionId = `pi-recv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const sendSessionId = `pi-send-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // Random suffix prevents cross-test and cross-run relay lease collisions.
+    const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const recvSessionId = `pi-recv-${runId}`;
+    const sendSessionId = `pi-send-${runId}`;
 
     const recvLocalAlias = "recv-local";
     const recvSessionsAlias = "recv-sessions";
-    const recvRelayAlias = deriveRelayAlias("recv-relay", hostHash);
+    const recvRelayAlias = deriveRelayAlias(`recv-relay-${runId}`, hostHash);
 
     const sendLocalAlias = "send-local";
     const sendSessionsAlias = "send-sessions";
-    const sendRelayAlias = deriveRelayAlias("send-relay", hostHash);
+    const sendRelayAlias = deriveRelayAlias(`send-relay-${runId}`, hostHash);
 
     // Receiver: registered on all three sources.
     const recvLocal = new C2cCli({

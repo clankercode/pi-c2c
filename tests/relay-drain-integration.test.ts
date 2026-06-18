@@ -82,7 +82,7 @@ test(
     const msgs = await drainAllSources(cli, {
       sessionsBrokerRoot: "/sessions",
       relayRegistered: true,
-      relayAddress: "me#hash",
+      relayAddress: "me@hash",
     });
 
     assert.equal(msgs.length, 3);
@@ -116,7 +116,7 @@ test(
     const msgs = await drainAllSources(cli, {
       sessionsBrokerRoot: undefined,
       relayRegistered: true,
-      relayAddress: "me#hash",
+      relayAddress: "me@hash",
     });
 
     // Both copies are present — dedup happens in the pipeline after drain.
@@ -143,7 +143,7 @@ test(
     const msgs = await drainAllSources(cli, {
       sessionsBrokerRoot: undefined,
       relayRegistered: true,
-      relayAddress: "me#hash",
+      relayAddress: "me@hash",
     });
 
     assert.equal(msgs.length, 2);
@@ -153,6 +153,8 @@ test(
     // toAlias → to_alias
     assert.equal(msgs[0].to_alias, "me");
     assert.equal(msgs[1].to_alias, "me");
+    assert.equal(msgs[0].source, "relay");
+    assert.equal(msgs[0].kind, "dm");
   },
 );
 
@@ -178,7 +180,7 @@ test(
     const msgs = await drainAllSources(cli, {
       sessionsBrokerRoot: undefined,
       relayRegistered: true,
-      relayAddress: "me#hash",
+      relayAddress: "me@hash",
       relayToC2c: customConvert,
     });
 
@@ -203,7 +205,7 @@ test(
     const msgs = await drainAllSources(cli, {
       sessionsBrokerRoot: "/sessions",
       relayRegistered: true,
-      relayAddress: "me#hash",
+      relayAddress: "me@hash",
     });
 
     // Per-repo failed → 0 messages from it. Sessions skipped because
@@ -235,7 +237,7 @@ test(
     const msgs = await drainAllSources(cli, {
       sessionsBrokerRoot: "/sessions",
       relayRegistered: true,
-      relayAddress: "me#hash",
+      relayAddress: "me@hash",
     });
 
     // Sessions failed (skipped) but per-repo and relay still delivered.
@@ -261,7 +263,7 @@ test(
     const msgs = await drainAllSources(cli, {
       sessionsBrokerRoot: undefined,
       relayRegistered: true,
-      relayAddress: "me#hash",
+      relayAddress: "me@hash",
     });
 
     // Relay failed → only local. Failure isolation works.
@@ -279,7 +281,7 @@ test(
     const msgs = await drainAllSources(cli, {
       sessionsBrokerRoot: "/sessions",
       relayRegistered: true,
-      relayAddress: "me#hash",
+      relayAddress: "me@hash",
     });
     assert.deepEqual(msgs, []);
   },
@@ -329,20 +331,20 @@ test(
     ];
     const remote: { session_id: string; alias: string; alive: boolean }[] = [];
     const relay: RelayPeer[] = [
-      { nodeId: "n1", sessionId: "s1", alias: "alpha#3d08761ae3f3", clientType: "pi", registeredAt: 1, lastSeen: 1, ttl: 86400, alive: true, identityPk: "pk1" },
-      { nodeId: "n2", sessionId: "s2", alias: "beta#abc123def456", clientType: "pi", registeredAt: 1, lastSeen: 1, ttl: 86400, alive: true, identityPk: "pk2" },
+      { nodeId: "n1", sessionId: "s1", alias: "alpha@3d08761ae3f3", clientType: "pi", registeredAt: 1, lastSeen: 1, ttl: 86400, alive: true, identityPk: "pk1" },
+      { nodeId: "n2", sessionId: "s2", alias: "beta@abc123def456", clientType: "pi", registeredAt: 1, lastSeen: 1, ttl: 86400, alive: true, identityPk: "pk2" },
     ];
     const merged = mergePeerLists(local, remote, relay);
 
     // alpha from local + alpha from relay → two distinct entries
     const alphaLocal = merged.find((p) => p.alias === "alpha");
-    const alphaRelay = merged.find((p) => p.alias === "alpha#3d08761ae3f3");
+    const alphaRelay = merged.find((p) => p.alias === "alpha@3d08761ae3f3");
     assert.ok(alphaLocal, "local alpha should be in merged list");
     assert.ok(alphaRelay, "relay alpha should be in merged list (distinct from local)");
     assert.equal(alphaLocal!.tag, "local");
     assert.equal(alphaRelay!.tag, "relay");
     // beta only from relay
-    const betaRelay = merged.find((p) => p.alias === "beta#abc123def456");
+    const betaRelay = merged.find((p) => p.alias === "beta@abc123def456");
     assert.ok(betaRelay);
     assert.equal(betaRelay!.tag, "relay");
   },

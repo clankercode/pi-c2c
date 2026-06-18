@@ -68,7 +68,7 @@ exit ${exitCode}
 
 test("RelayWatcher: constructor sets initial state correctly", () => {
   const w = new RelayWatcher({
-    alias: "test#123",
+    alias: "test@123",
     relayUrl: "https://relay.example.com",
     onChange: () => {},
   });
@@ -80,7 +80,7 @@ test("RelayWatcher: isRunning reflects state after start", () => {
   const dir = tmpDir();
   const bin = createMockBinary(dir, []);
   const w = new RelayWatcher({
-    alias: "test#123",
+    alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
     onChange: () => {},
@@ -95,12 +95,12 @@ test("RelayWatcher: isRunning reflects state after start", () => {
 
 test("RelayWatcher: fires onChange when JSON line is received", async () => {
   const dir = tmpDir();
-  const jsonLine = JSON.stringify({ op: "dm", from: "sender#abc", body: "hello", ts: 123 });
+  const jsonLine = JSON.stringify({ op: "dm", from: "sender@abc", body: "hello", ts: 123 });
   const bin = createMockBinary(dir, [jsonLine]);
 
   let calls = 0;
   const w = new RelayWatcher({
-    alias: "test#123",
+    alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
     onChange: () => calls++,
@@ -118,17 +118,17 @@ test("RelayWatcher: fires onChange when JSON line is received", async () => {
 test("RelayWatcher: debounces burst events", async () => {
   const dir = tmpDir();
   const lines = [
-    JSON.stringify({ op: "dm", from: "a#1", body: "1", ts: 1 }),
-    JSON.stringify({ op: "dm", from: "a#1", body: "2", ts: 2 }),
-    JSON.stringify({ op: "dm", from: "a#1", body: "3", ts: 3 }),
-    JSON.stringify({ op: "dm", from: "a#1", body: "4", ts: 4 }),
-    JSON.stringify({ op: "dm", from: "a#1", body: "5", ts: 5 }),
+    JSON.stringify({ op: "dm", from: "a@1", body: "1", ts: 1 }),
+    JSON.stringify({ op: "dm", from: "a@1", body: "2", ts: 2 }),
+    JSON.stringify({ op: "dm", from: "a@1", body: "3", ts: 3 }),
+    JSON.stringify({ op: "dm", from: "a@1", body: "4", ts: 4 }),
+    JSON.stringify({ op: "dm", from: "a@1", body: "5", ts: 5 }),
   ];
   const bin = createMockBinary(dir, lines);
 
   let calls = 0;
   const w = new RelayWatcher({
-    alias: "test#123",
+    alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
     onChange: () => calls++,
@@ -151,7 +151,7 @@ test("RelayWatcher: stop() halts and is idempotent", () => {
   const dir = tmpDir();
   const bin = createMockBinary(dir, []);
   const w = new RelayWatcher({
-    alias: "test#123",
+    alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
     onChange: () => {},
@@ -167,7 +167,7 @@ test("RelayWatcher: stop() halts and is idempotent", () => {
 
 test("RelayWatcher: cannot start after stop", () => {
   const w = new RelayWatcher({
-    alias: "test#123",
+    alias: "test@123",
     relayUrl: "https://relay.example.com",
     onChange: () => {},
   });
@@ -179,7 +179,7 @@ test("RelayWatcher: start is idempotent", () => {
   const dir = tmpDir();
   const bin = createMockBinary(dir, []);
   const w = new RelayWatcher({
-    alias: "test#123",
+    alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
     onChange: () => {},
@@ -193,12 +193,12 @@ test("RelayWatcher: start is idempotent", () => {
 
 test("RelayWatcher: transitions to connected on first JSON line", async () => {
   const dir = tmpDir();
-  const jsonLine = JSON.stringify({ op: "dm", from: "x#1", body: "hi", ts: 1 });
+  const jsonLine = JSON.stringify({ op: "dm", from: "x@1", body: "hi", ts: 1 });
   const bin = createMockBinary(dir, [jsonLine]);
 
   const states: RelayWatcherState[] = [];
   const w = new RelayWatcher({
-    alias: "test#123",
+    alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
     onChange: () => {},
@@ -220,7 +220,7 @@ test("RelayWatcher: transitions to reconnecting on process exit", async () => {
 
   const states: RelayWatcherState[] = [];
   const w = new RelayWatcher({
-    alias: "test#123",
+    alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
     onChange: () => {},
@@ -242,14 +242,14 @@ test("RelayWatcher: ignores non-JSON lines", async () => {
   const lines = [
     "Starting relay subscription...",
     "Connected to relay",
-    JSON.stringify({ op: "dm", from: "x#1", body: "hi", ts: 1 }),
+    JSON.stringify({ op: "dm", from: "x@1", body: "hi", ts: 1 }),
     "Some debug output",
   ];
   const bin = createMockBinary(dir, lines);
 
   let calls = 0;
   const w = new RelayWatcher({
-    alias: "test#123",
+    alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
     onChange: () => calls++,
@@ -268,7 +268,7 @@ test("RelayWatcher: ignores non-JSON lines", async () => {
 
 test("RelayWatcher: tolerates missing binary (no throw)", () => {
   const w = new RelayWatcher({
-    alias: "test#123",
+    alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin: "/nonexistent/path/to/c2c",
     onChange: () => {},
@@ -281,14 +281,14 @@ test("RelayWatcher: tolerates missing binary (no throw)", () => {
 test("RelayWatcher: errors in onChange do not crash watcher", async () => {
   const dir = tmpDir();
   const lines = [
-    JSON.stringify({ op: "dm", from: "a#1", body: "1", ts: 1 }),
-    JSON.stringify({ op: "dm", from: "a#1", body: "2", ts: 2 }),
+    JSON.stringify({ op: "dm", from: "a@1", body: "1", ts: 1 }),
+    JSON.stringify({ op: "dm", from: "a@1", body: "2", ts: 2 }),
   ];
   const bin = createMockBinary(dir, lines);
 
   let calls = 0;
   const w = new RelayWatcher({
-    alias: "test#123",
+    alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
     onChange: () => {

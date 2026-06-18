@@ -38,6 +38,10 @@ export interface C2cMessage {
   to_alias: string;
   content: string;
   ts: number;
+  /** Source that produced this message after the extension merges drain paths. */
+  source?: "broker" | "relay";
+  /** Explicit message kind when a drain path can identify it without guessing. */
+  kind?: "dm" | "room";
   /**
    * When true, the receiver should use followUp delivery (no interrupt,
    * no steer) instead of the default triggerTurn+steer. Set by the sender
@@ -264,6 +268,7 @@ export interface RelayPeer {
   ttl: number;
   alive: boolean;
   identityPk: string;
+  opaqueHostId?: string;
 }
 
 /** Result of `c2c relay register --json`. */
@@ -274,7 +279,7 @@ export interface RelayRegisterResult {
   registeredAt: number;
   ttl: number;
   alive: boolean;
-  /** Opaque host id returned by the relay when the alias includes the #<hostid> suffix. */
+  /** Opaque host id returned by the relay when the alias includes the @<hostid> suffix. */
   opaqueHostId?: string;
 }
 
@@ -340,6 +345,7 @@ export function parseRelayPeers(stdout: string): RelayPeer[] {
       ttl: typeof p.ttl === "number" ? p.ttl : 0,
       alive: p.alive === true,
       identityPk: asString(p.identity_pk),
+      opaqueHostId: typeof p.opaque_host_id === "string" ? p.opaque_host_id : undefined,
     });
   }
   return out;

@@ -276,7 +276,7 @@ test("relayRegister: builds register args, optional relay-url and token, parses 
   const regJson = JSON.stringify({
     ok: true,
     lease: {
-      alias: "pi-c01ea5#a3b2c1d4e5f6",
+      alias: "pi-c01ea5@a3b2c1d4e5f6",
       session_id: "sid-1",
       node_id: "n1",
       registered_at: 1781638000,
@@ -286,19 +286,19 @@ test("relayRegister: builds register args, optional relay-url and token, parses 
     },
   });
   const a = fakeExec({ stdout: regJson });
-  const got = await new C2cCli({ exec: a.exec }).relayRegister("pi-c01ea5#a3b2c1d4e5f6");
-  assert.equal(got?.alias, "pi-c01ea5#a3b2c1d4e5f6");
+  const got = await new C2cCli({ exec: a.exec }).relayRegister("pi-c01ea5@a3b2c1d4e5f6");
+  assert.equal(got?.alias, "pi-c01ea5@a3b2c1d4e5f6");
   assert.equal(got?.opaqueHostId, "a3b2c1d4e5f6");
-  assert.deepEqual(a.calls[0].args, ["relay", "register", "--alias", "pi-c01ea5#a3b2c1d4e5f6"]);
+  assert.deepEqual(a.calls[0].args, ["relay", "register", "--alias", "pi-c01ea5@a3b2c1d4e5f6"]);
 
   const b = fakeExec({ stdout: regJson });
-  await new C2cCli({ exec: b.exec }).relayRegister("pi-x#h", {
+  await new C2cCli({ exec: b.exec }).relayRegister("pi-x@h", {
     relayUrl: "https://relay.example.com",
     token: "tok-1",
   });
   assert.deepEqual(b.calls[0].args, [
     "relay", "register",
-    "--alias", "pi-x#h",
+    "--alias", "pi-x@h",
     "--relay-url", "https://relay.example.com",
     "--token", "tok-1",
   ]);
@@ -308,13 +308,13 @@ test("relayList: builds list args + parses peers", async () => {
   const json = JSON.stringify({
     ok: true,
     peers: [
-      { alias: "pi-x#aaaa", node_id: "n1", session_id: "s1", client_type: "pi", registered_at: 1, last_seen: 2, ttl: 60, alive: true, identity_pk: "pk" },
+      { alias: "pi-x@aaaa", node_id: "n1", session_id: "s1", client_type: "pi", registered_at: 1, last_seen: 2, ttl: 60, alive: true, identity_pk: "pk" },
     ],
   });
   const { exec, calls } = fakeExec({ stdout: json });
   const peers = await new C2cCli({ exec }).relayList();
   assert.equal(peers.length, 1);
-  assert.equal(peers[0].alias, "pi-x#aaaa");
+  assert.equal(peers[0].alias, "pi-x@aaaa");
   assert.equal(peers[0].alive, true);
   assert.deepEqual(calls[0].args, ["relay", "list"]);
 });
@@ -327,36 +327,36 @@ test("relayDmPoll: builds poll args with --alias, parses messages", async () => 
     ],
   });
   const { exec, calls } = fakeExec({ stdout: json });
-  const msgs = await new C2cCli({ exec }).relayDmPoll("me#hhhh");
+  const msgs = await new C2cCli({ exec }).relayDmPoll("me@hhhh");
   assert.equal(msgs.length, 1);
   assert.equal(msgs[0].fromAlias, "peer");
   assert.equal(msgs[0].content, "hi");
-  assert.deepEqual(calls[0].args, ["relay", "dm", "poll", "--alias", "me#hhhh"]);
+  assert.deepEqual(calls[0].args, ["relay", "dm", "poll", "--alias", "me@hhhh"]);
 });
 
 test("relayDmSend: builds send args with --alias and -- before positionals", async () => {
   const { exec, calls } = fakeExec({});
-  await new C2cCli({ exec }).relayDmSend("peer#hhhh", "hello from relay", "me#hhhh");
+  await new C2cCli({ exec }).relayDmSend("peer@hhhh", "hello from relay", "me@hhhh");
   assert.deepEqual(calls[0].args, [
     "relay", "dm", "send",
-    "--alias", "me#hhhh",
-    "--", "peer#hhhh", "hello from relay",
+    "--alias", "me@hhhh",
+    "--", "peer@hhhh", "hello from relay",
   ]);
 });
 
 test("relayDmSendAll: builds send-all args with --alias and -- before body", async () => {
   const { exec, calls } = fakeExec({});
-  await new C2cCli({ exec }).relayDmSendAll("broadcast over relay", "me#hhhh");
+  await new C2cCli({ exec }).relayDmSendAll("broadcast over relay", "me@hhhh");
   assert.deepEqual(calls[0].args, [
     "relay", "dm", "send-all",
-    "--alias", "me#hhhh",
+    "--alias", "me@hhhh",
     "--", "broadcast over relay",
   ]);
 });
 
 test("relayDmPoll: empty list when ok=false", async () => {
   const { exec, calls } = fakeExec({ stdout: '{"ok":false,"error":"unauthorized"}' });
-  const msgs = await new C2cCli({ exec }).relayDmPoll("me#hhhh");
+  const msgs = await new C2cCli({ exec }).relayDmPoll("me@hhhh");
   assert.deepEqual(msgs, []);
   assert.equal(calls[0].args[0], "relay");
 });
@@ -365,10 +365,10 @@ test("relay methods clear C2C_MCP_SESSION_ID to avoid ghost cli-* leases", async
   process.env.C2C_MCP_SESSION_ID = "stale-session";
   const regJson = JSON.stringify({
     ok: true,
-    lease: { alias: "a#123", session_id: "s1", node_id: "n1", registered_at: 1, ttl: 60, alive: true },
+    lease: { alias: "a@123", session_id: "s1", node_id: "n1", registered_at: 1, ttl: 60, alive: true },
   });
   const { exec: regExec, calls: regCalls } = fakeExec({ stdout: regJson });
-  await new C2cCli({ exec: regExec }).relayRegister("a#123");
+  await new C2cCli({ exec: regExec }).relayRegister("a@123");
   assert.equal(regCalls[0].env.C2C_MCP_SESSION_ID, undefined);
 
   const { exec: listExec, calls: listCalls } = fakeExec({
@@ -380,7 +380,7 @@ test("relay methods clear C2C_MCP_SESSION_ID to avoid ghost cli-* leases", async
   const { exec: pollExec, calls: pollCalls } = fakeExec({
     stdout: JSON.stringify({ ok: true, messages: [] }),
   });
-  await new C2cCli({ exec: pollExec }).relayDmPoll("a#123");
+  await new C2cCli({ exec: pollExec }).relayDmPoll("a@123");
   assert.equal(pollCalls[0].env.C2C_MCP_SESSION_ID, undefined);
 
   delete process.env.C2C_MCP_SESSION_ID;
@@ -413,6 +413,8 @@ test("relayToC2c: maps fromAlias/toAlias to snake_case", () => {
   assert.equal(out[0].to_alias, "me");
   assert.equal(out[0].content, "hi");
   assert.equal(out[0].ts, 100);
+  assert.equal(out[0].source, "relay");
+  assert.equal(out[0].kind, "dm");
   // Relay-only fields must NOT leak into the broker shape.
   assert.equal((out[0] as unknown as Record<string, unknown>).messageId, undefined);
 });

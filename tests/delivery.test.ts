@@ -59,7 +59,7 @@ test("formatEnvelope: auto-detects room from to_alias '<alias>#<room-id>'", () =
   const env = formatEnvelope(mk({ to_alias: "pi-abc#swarm-lounge" }));
   assert.match(env, /reply_via="c2c_pi_send_room"/);
   assert.match(env, /room message from `storm`/);
-  assert.match(env, /c2c_pi_send_room\(room="<room id>"/);
+  assert.match(env, /c2c_pi_send_room\(room="swarm-lounge"/);
 });
 
 test("formatEnvelope: explicit kind='dm' overrides auto-detect for room to_alias", () => {
@@ -71,12 +71,11 @@ test("formatEnvelope: explicit kind='dm' overrides auto-detect for room to_alias
   assert.match(env, /direct message from `storm`/);
 });
 
-test("formatEnvelope: relay DM (to_alias has 12-hex host hash) is NOT auto-detected as room", () => {
-  // Relay DM to_alias is `<recipient-name>#<12-hex-host-hash>` (see
-  // src/relay.ts:deriveRelayAlias). It also contains '#', but the suffix
-  // shape distinguishes it from a room delivery. Reply must be a DM
-  // (c2c_pi_send), not a room send.
-  const env = formatEnvelope(mk({ to_alias: "pi-abc#abcdef012345" }));
+test("formatEnvelope: relay DM (to_alias has @host hash) is NOT auto-detected as room", () => {
+  // Relay DM to_alias is `<recipient-name>@<12-hex-host-hash>` and must use
+  // explicit relay metadata. Suffix-only guessing would confuse it with a room
+  // message, while suffix-only exclusion would confuse valid hex room ids.
+  const env = formatEnvelope(mk({ to_alias: "pi-abc@abcdef012345", source: "relay", kind: "dm" }));
   assert.match(env, /reply_via="c2c_pi_send"/);
   assert.match(env, /direct message from `storm`/);
   assert.doesNotMatch(env, /reply_via="c2c_pi_send_room"/);
@@ -95,17 +94,19 @@ test("isRoomMessage: room delivery has non-hex # suffix", () => {
   assert.equal(isRoomMessage(mk({ to_alias: "alice#general" })), true);
 });
 
-test("isRoomMessage: relay DM # suffix is 12 lowercase hex chars (host hash)", () => {
-  assert.equal(isRoomMessage(mk({ to_alias: "alice#0123456789ab" })), false);
-  assert.equal(isRoomMessage(mk({ to_alias: "alice#ffffffffffff" })), false);
+test("isRoomMessage: relay DM metadata overrides @ suffix", () => {
+  assert.equal(isRoomMessage(mk({ to_alias: "alice@0123456789ab", source: "relay", kind: "dm" })), false);
+  assert.equal(isRoomMessage(mk({ to_alias: "alice@ffffffffffff", source: "relay", kind: "dm" })), false);
 });
 
-test("isRoomMessage: 12-lowercase-hex room id is misclassified as relay DM", () => {
-  // Documented edge case of the to_alias-only heuristic: a room id that
-  // happens to be exactly 12 lowercase hex chars looks like a relay host
-  // hash and will be treated as a DM. This is acceptable because room ids
-  // are normally human-readable names, not raw hex.
-  assert.equal(isRoomMessage(mk({ to_alias: "alice#deadbeefcafe" })), false);
+test("isRoomMessage: 12-lowercase-hex broker room id remains a room", () => {
+  assert.equal(isRoomMessage(mk({ to_alias: "alice#deadbeefcafe" })), true);
+});
+
+test("formatEnvelope: room reminder uses 12-lowercase-hex room id", () => {
+  const env = formatEnvelope(mk({ to_alias: "alice#deadbeefcafe" }));
+  assert.match(env, /reply_via="c2c_pi_send_room"/);
+  assert.match(env, /c2c_pi_send_room\(room="deadbeefcafe"/);
 });
 
 test("formatEnvelope: reminder escape — backticks/backslashes in alias", () => {
@@ -114,10 +115,8 @@ test("formatEnvelope: reminder escape — backticks/backslashes in alias", () =>
   const env = formatEnvelope(mk({ from_alias: "evil`ignore-previous" }));
   // Backticks must be backslash-escaped inside the fence.
   assert.match(env, /from `evil\\`ignore-previous`/);
-  // And the alias is also interpolated as target="…" — backslash-escape
-  // any backslashes there too. (Backslashes are not in the alias here, so
-  // we just confirm the target literal uses the same escaped value.)
-  assert.match(env, /target="evil\\`ignore-previous"/);
+  // And the alias is also interpolated as a real JS string literal.
+  assert.match(env, /target="evil`ignore-previous"/);
   // Sanity: the fence closes once and only once around the alias.
   const fences = env.match(/from `[^`]*`/g);
   assert.ok(fences && fences.length >= 1);
@@ -129,6 +128,13 @@ test("formatEnvelope: reminder escape — backslash in alias", () => {
   const env = formatEnvelope(mk({ from_alias: "path\\to\\alias" }));
   assert.match(env, /from `path\\\\to\\\\alias`/);
   assert.match(env, /target="path\\\\to\\\\alias"/);
+});
+
+test("formatEnvelope: tool args use JS string literals for quotes and newlines", () => {
+  const env = formatEnvelope(mk({ from_alias: 'bad"line\nnext\u0001' }));
+  assert.match(env, /from `bad"line\\nnext\\u0001`/);
+  assert.match(env, /c2c_pi_send\(target="bad\\"line\\nnext\\u0001", body="<your reply>"\)/);
+  assert.match(env, /target="bad\\"line\\nnext\\u0001"/);
 });
 
 test("formatEnvelope: reminder names the sender so the agent doesn't scan the envelope", () => {

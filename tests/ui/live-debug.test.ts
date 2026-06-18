@@ -12,7 +12,7 @@ const opts = {
   identity: { alias: "pi-test", sessionId: "pi-sess" },
   registered: true,
   relayRegistered: true,
-  relayAddress: "pi-test#abc123",
+  relayAddress: "pi-test@abc123",
   crossRepoEnabled: true,
   crossRepoSessionsRegistered: true,
   pollIntervalMs: 5000,

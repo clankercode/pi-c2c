@@ -112,7 +112,7 @@ test("mergePeerLists: local + cross + relay dedup and sort", () => {
   const remote: C2cPeer[] = [{ alias: "bob", session_id: "s2", alive: true }];
   const relay: RelayPeer[] = [
     {
-      alias: "carol#abc123",
+      alias: "carol@abc123",
       nodeId: "n3",
       sessionId: "s3",
       clientType: "pi",
@@ -130,7 +130,7 @@ test("mergePeerLists: local + cross + relay dedup and sort", () => {
     [
       { alias: "alice", tag: "local" },
       { alias: "bob", tag: "cross" },
-      { alias: "carol#abc123", tag: "relay" },
+      { alias: "carol@abc123", tag: "relay" },
     ],
   );
 });
@@ -159,10 +159,12 @@ test("drainAllSources: combines all sources in order", async () => {
   const msgs = await drainAllSources(cli, {
     sessionsBrokerRoot: "/sessions",
     relayRegistered: true,
-    relayAddress: "me#hash",
+    relayAddress: "me@hash",
   });
   assert.equal(msgs.length, 3);
   assert.deepEqual(msgs.map((m) => m.from_alias), ["a", "b", "c"]);
+  assert.equal(msgs[2].source, "relay");
+  assert.equal(msgs[2].kind, "dm");
 });
 
 test("drainAllSources: isolated failures do not lose other sources", async () => {
@@ -178,7 +180,7 @@ test("drainAllSources: isolated failures do not lose other sources", async () =>
   const msgs = await drainAllSources(cli, {
     sessionsBrokerRoot: "/sessions",
     relayRegistered: true,
-    relayAddress: "me#hash",
+    relayAddress: "me@hash",
   });
   assert.equal(msgs.length, 1);
   assert.equal(msgs[0].from_alias, "a");

@@ -99,7 +99,7 @@ export interface MergedPeer {
 /**
  * Merge peer lists from the per-repo broker, sessions broker, and relay.
  * Local + cross-repo peers are deduped by session_id; relay peers are deduped
- * by their `<alias>#<host_hash>` alias since they have no correlatable
+ * by their `<alias>@<host_hash>` alias since they have no correlatable
  * session_id. Live entries win over dead ones.
  */
 export function mergePeerLists(
@@ -167,6 +167,8 @@ export async function drainAllSources(cli: C2cCli, opts: {
           to_alias: m.toAlias,
           content: m.content,
           ts: m.ts,
+          source: "relay" as const,
+          kind: "dm" as const,
         })));
       drained.push(...convert(relayMsgs));
     } catch {

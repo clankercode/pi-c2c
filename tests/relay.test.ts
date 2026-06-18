@@ -147,9 +147,9 @@ test("computeHostHash: 12 hex chars ≈ 48 bits of entropy", () => {
   assert.notEqual(h1, h2);
 });
 
-test("deriveRelayAlias: produces '<name>#<host_hash>'", () => {
+test("deriveRelayAlias: produces '<name>@<host_hash>'", () => {
   const alias = deriveRelayAlias("pi-c01ea5", "a1b2c3d4e5f6");
-  assert.equal(alias, "pi-c01ea5#a1b2c3d4e5f6");
+  assert.equal(alias, "pi-c01ea5@a1b2c3d4e5f6");
 });
 
 test("deriveRelayAlias: rejects invalid name characters", () => {
@@ -165,24 +165,25 @@ test("deriveRelayAlias: rejects invalid host_hash", () => {
 });
 
 test("parseRelayAlias: round-trips a derived alias", () => {
-  const original = "pi-c01ea5#a1b2c3d4e5f6";
+  const original = "pi-c01ea5@a1b2c3d4e5f6";
   const parsed = parseRelayAlias(original);
   assert.deepEqual(parsed, { name: "pi-c01ea5", hostHash: "a1b2c3d4e5f6" });
 });
 
-test("parseRelayAlias: returns null on missing #", () => {
+test("parseRelayAlias: returns null on missing @", () => {
   assert.equal(parseRelayAlias("pi-c01ea5"), null);
+  assert.equal(parseRelayAlias("pi-c01ea5#a1b2c3d4e5f6"), null);
   assert.equal(parseRelayAlias(""), null);
 });
 
 test("parseRelayAlias: returns null on invalid name", () => {
-  assert.equal(parseRelayAlias("pi/abc#a1b2c3d4e5f6"), null);
-  assert.equal(parseRelayAlias("#a1b2c3d4e5f6"), null);
+  assert.equal(parseRelayAlias("pi/abc@a1b2c3d4e5f6"), null);
+  assert.equal(parseRelayAlias("@a1b2c3d4e5f6"), null);
 });
 
 test("parseRelayAlias: returns null on invalid host_hash", () => {
-  assert.equal(parseRelayAlias("pi-c01ea5#tooshort"), null);
-  assert.equal(parseRelayAlias("pi-c01ea5#aabbccddeeffXX"), null);
+  assert.equal(parseRelayAlias("pi-c01ea5@tooshort"), null);
+  assert.equal(parseRelayAlias("pi-c01ea5@aabbccddeeffXX"), null);
 });
 
 test("Integration: deriveRelayAlias -> parseRelayAlias round-trips", () => {
@@ -205,7 +206,7 @@ test("Integration: computeHostHash output is valid for deriveRelayAlias", () => 
   const net = fakeNet({ hostname: "xsm" });
   const h = computeHostHash(fs, net);
   const alias = deriveRelayAlias("pi-test", h);
-  assert.match(alias, /^pi-test#[0-9a-f]{12}$/);
+  assert.match(alias, /^pi-test@[0-9a-f]{12}$/);
   const parsed = parseRelayAlias(alias);
   assert.equal(parsed!.hostHash, h);
 });

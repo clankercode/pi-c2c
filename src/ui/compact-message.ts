@@ -13,6 +13,7 @@
 import type { Component } from "@earendil-works/pi-tui";
 import { Container, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { parseRelayAlias } from "../relay.ts";
 import { parseStatusEnvelope, type StatusEnvelope } from "../status-sync.ts";
 
 /** Structured metadata passed in `sendMessage(...).details`. */
@@ -66,11 +67,11 @@ function useAsciiGlyphs(): boolean {
   return process.env.PI_C2C_ASCII === "1";
 }
 
-/** Pick a route glyph for a sender alias. Relay aliases end with `#<hash>`;
+/** Pick a route glyph for a sender alias. Relay aliases end with `@<hash>`;
  *  otherwise we can't know the broker from the message alone, so we default
  *  to the cross-repo sessions route for non-local-looking aliases. */
 function routeForAlias(alias: string): keyof typeof ROUTES {
-  if (alias.includes("#")) return "relay";
+  if (parseRelayAlias(alias)) return "relay";
   return "sessions";
 }
 

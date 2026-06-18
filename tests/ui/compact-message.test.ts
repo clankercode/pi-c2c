@@ -140,8 +140,8 @@ describe("buildCompactLine", () => {
     assert.ok(line.includes("pi-313d8c"));
   });
 
-  it("shows relay route for aliases with #host_hash", () => {
-    const msg = makeMessage(envelope("remote#a3b2c1d4e5f6", "hello"));
+  it("shows relay route for aliases with ", () => {
+    const msg = makeMessage(envelope("remote@a3b2c1d4e5f6", "hello"));
     const line = buildCompactLine(msg, plainTheme, 80);
     assert.ok(line.includes("⇄"));
   });
