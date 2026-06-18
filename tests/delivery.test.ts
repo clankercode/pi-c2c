@@ -100,6 +100,14 @@ test("isRoomMessage: relay DM # suffix is 12 lowercase hex chars (host hash)", (
   assert.equal(isRoomMessage(mk({ to_alias: "alice#ffffffffffff" })), false);
 });
 
+test("isRoomMessage: 12-lowercase-hex room id is misclassified as relay DM", () => {
+  // Documented edge case of the to_alias-only heuristic: a room id that
+  // happens to be exactly 12 lowercase hex chars looks like a relay host
+  // hash and will be treated as a DM. This is acceptable because room ids
+  // are normally human-readable names, not raw hex.
+  assert.equal(isRoomMessage(mk({ to_alias: "alice#deadbeefcafe" })), false);
+});
+
 test("formatEnvelope: reminder escape — backticks/backslashes in alias", () => {
   // A malicious or accidental alias with backticks / backslashes must not
   // break out of the code-fenced example and re-instruct the agent.
@@ -113,6 +121,14 @@ test("formatEnvelope: reminder escape — backticks/backslashes in alias", () =>
   // Sanity: the fence closes once and only once around the alias.
   const fences = env.match(/from `[^`]*`/g);
   assert.ok(fences && fences.length >= 1);
+});
+
+test("formatEnvelope: reminder escape — backslash in alias", () => {
+  // A literal backslash in an alias must not break the target="…" attribute
+  // or the code-fenced example. The same escaping rule covers both contexts.
+  const env = formatEnvelope(mk({ from_alias: "path\\to\\alias" }));
+  assert.match(env, /from `path\\\\to\\\\alias`/);
+  assert.match(env, /target="path\\\\to\\\\alias"/);
 });
 
 test("formatEnvelope: reminder names the sender so the agent doesn't scan the envelope", () => {

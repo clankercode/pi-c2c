@@ -53,7 +53,10 @@ export function sanitizeContent(content: string): string {
  * treated as a room id. This matches what the c2c relay address
  * format has looked like since the relay design landed; if the relay
  * format ever changes, this helper and `deriveRelayAlias` must move
- * together.
+ * together. A room id that happens to be exactly 12 lowercase hex
+ * characters will be misclassified as a relay DM by this heuristic —
+ * this is a documented, low-frequency edge case of relying on
+ * `to_alias` alone.
  */
 export function isRoomMessage(msg: C2cMessage): boolean {
   if (typeof msg.to_alias !== "string") return false;
@@ -71,12 +74,11 @@ export function isRoomMessage(msg: C2cMessage): boolean {
  * call shape, and falls back to the generic MCP tool name so the agent
  * doesn't have to infer any of it from the envelope attributes alone.
  *
- * The peer-controlled envelope attribute `from` is interpolated into a
- * code-fenced example string (backticks around it) so even a
- * prompt-injection peer that forges a misleading alias cannot escape the
- * fenced region and re-instruct the agent. Sender `from` is also
- * backslash-escaped to neutralise backticks and backslashes inside the
- * example literal.
+ * The peer-controlled envelope attribute `from` is interpolated into
+ * the reminder, both inside a code-fenced example (backticks around it)
+ * and as a double-quoted tool argument. Backslash-escaping backticks
+ * and backslashes keeps the alias from breaking out of either context
+ * and re-instructing the agent even if a peer forges a misleading alias.
  *
  * For room messages (`kind = "room"`), the reminder directs the agent to
  * the room send tool. The example uses `<room id>` as a placeholder
