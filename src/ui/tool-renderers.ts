@@ -10,7 +10,7 @@ import { Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
-const INDENT_DIAMOND = " ";
+const INDENT_C2C = "⧓";
 const INDENT_CHILD = "   ";
 
 // ── detail types (consumed by the extension for tool execute return) ───────────
@@ -80,12 +80,12 @@ function peerIndicator(alive: boolean, theme: Theme): string {
 
 /**
  * One-line preview shown while a send tool is executing.
- *   ◈ c2c · send → lyra-quill
- *   ◈ c2c · broadcast
- *   ◈ c2c · send to room swarm-lounge
+ *   ⧓ c2c · send → lyra-quill
+ *   ⧓ c2c · broadcast
+ *   ⧓ c2c · send to room swarm-lounge
  */
 export function renderSendCall(args: SendToolDetails, theme: Theme): Component {
-  const parts: string[] = [INDENT_DIAMOND, theme.fg("accent", "◈ c2c")];
+  const parts: string[] = [INDENT_C2C, theme.fg("accent", "⧓ c2c")];
   switch (args.kind) {
     case "dm":
       parts.push(theme.fg("text", ` send → ${args.target ?? "unknown"}`));
@@ -132,16 +132,16 @@ function previewBody(body: string | undefined, maxLen = 60): string {
 
 /**
  * Result shown when a send tool finishes.
- *   ◈ c2c · ▲◎ → lyra-quill · preview…
- *   ◈ c2c · ✶◎ broadcast · preview…
- *   ◈ c2c · ▲◎ → room swarm-lounge · preview…
+ *   ⧓ c2c · ▲◎ → lyra-quill · preview…
+ *   ⧓ c2c · ✶◎ broadcast · preview…
+ *   ⧓ c2c · ▲◎ → room swarm-lounge · preview…
  */
 export function renderSendResult(details: SendToolDetails, isError: boolean, theme: Theme): Component {
   if (isError) {
-    return new Text(theme.fg("error", `${INDENT_DIAMOND}◈ c2c · send error`), 0, 0);
+    return new Text(theme.fg("error", `${INDENT_C2C}⧓ c2c · send error`), 0, 0);
   }
 
-  const parts: string[] = [INDENT_DIAMOND, theme.fg("accent", "◈ c2c"), theme.fg("borderMuted", " · ")];
+  const parts: string[] = [INDENT_C2C, theme.fg("accent", "⧓ c2c"), theme.fg("borderMuted", " · ")];
   parts.push(sendPrefix(details.kind, details.via, theme));
 
   switch (details.kind) {
@@ -167,21 +167,21 @@ export function renderSendResult(details: SendToolDetails, isError: boolean, the
 
 /**
  * Result for c2c_pi_list.
- *   ◈ c2c · peers (3)
+ *   ⧓ c2c · peers (3)
  *      ● alias-one
  *      ● alias-two  [cross-repo]
  *      ○ alias-three
  */
 export function renderListResult(details: ListToolDetails, isError: boolean, theme: Theme): Component {
   if (isError) {
-    return new Text(theme.fg("error", `${INDENT_DIAMOND}◈ c2c · peers error`), 0, 0);
+    return new Text(theme.fg("error", `${INDENT_C2C}⧓ c2c · peers error`), 0, 0);
   }
 
   const peers = details.peers ?? [];
   const container = new Container();
   const header = new Text(
-    INDENT_DIAMOND +
-      theme.fg("accent", "◈ c2c") +
+    INDENT_C2C +
+      theme.fg("accent", "⧓ c2c") +
       theme.fg("borderMuted", " · ") +
       theme.fg("text", "peers") +
       (peers.length > 0 ? theme.fg("muted", ` (${peers.length})`) : ""),
@@ -230,7 +230,7 @@ function statusColor(state: string): import("@earendil-works/pi-coding-agent").T
 
 /**
  * Result for c2c_pi_poll_inbox.
- *   ◈ c2c · inbox (2)
+ *   ⧓ c2c · inbox (2)
  *      lyra-quill: preview...
  *      other: preview...
  */
@@ -240,14 +240,14 @@ export function renderInboxResult(
   theme: Theme,
 ): Component {
   if (isError) {
-    return new Text(theme.fg("error", `${INDENT_DIAMOND}◈ c2c · inbox error`), 0, 0);
+    return new Text(theme.fg("error", `${INDENT_C2C}⧓ c2c · inbox error`), 0, 0);
   }
 
   const messages = details.messages ?? [];
   const container = new Container();
   const header = new Text(
-    INDENT_DIAMOND +
-      theme.fg("accent", "◈ c2c") +
+    INDENT_C2C +
+      theme.fg("accent", "⧓ c2c") +
       theme.fg("borderMuted", " · ") +
       theme.fg("text", "inbox") +
       (messages.length > 0 ? theme.fg("muted", ` (${messages.length})`) : ""),
@@ -272,7 +272,7 @@ export function renderInboxResult(
 
 /**
  * Result for c2c_pi_whoami.
- *   ◈ c2c · alias (session-id) · registered
+ *   ⧓ c2c · alias (session-id) · registered
  */
 export function renderWhoamiResult(
   details: WhoamiToolDetails,
@@ -280,15 +280,15 @@ export function renderWhoamiResult(
   theme: Theme,
 ): Component {
   if (isError) {
-    return new Text(theme.fg("error", `${INDENT_DIAMOND}◈ c2c · whoami error`), 0, 0);
+    return new Text(theme.fg("error", `${INDENT_C2C}⧓ c2c · whoami error`), 0, 0);
   }
 
   const status = details.registered
     ? theme.fg("success", "registered")
     : theme.fg("warning", "not registered");
   const line =
-    INDENT_DIAMOND +
-    theme.fg("accent", "◈ c2c") +
+    INDENT_C2C +
+    theme.fg("accent", "⧓ c2c") +
     theme.fg("borderMuted", " · ") +
     theme.fg("text", details.alias) +
     theme.fg("muted", ` (${details.sessionId})`) +
@@ -302,7 +302,7 @@ export function renderWhoamiResult(
 
 /**
  * Result for c2c_pi_join_room.
- *   ◈ c2c · joined room swarm-lounge
+ *   ⧓ c2c · joined room swarm-lounge
  */
 export function renderJoinRoomResult(
   details: RoomToolDetails,
@@ -310,12 +310,12 @@ export function renderJoinRoomResult(
   theme: Theme,
 ): Component {
   if (isError) {
-    return new Text(theme.fg("error", `${INDENT_DIAMOND}◈ c2c · join room error`), 0, 0);
+    return new Text(theme.fg("error", `${INDENT_C2C}⧓ c2c · join room error`), 0, 0);
   }
 
   const line =
-    INDENT_DIAMOND +
-    theme.fg("accent", "◈ c2c") +
+    INDENT_C2C +
+    theme.fg("accent", "⧓ c2c") +
     theme.fg("success", " joined") +
     theme.fg("borderMuted", " room ") +
     theme.fg("text", details.room);
@@ -327,7 +327,7 @@ export function renderJoinRoomResult(
 
 /**
  * Result for c2c_pi_rooms.
- *   ◈ c2c · rooms (2)
+ *   ⧓ c2c · rooms (2)
  *      swarm-lounge
  *      ops
  */
@@ -337,14 +337,14 @@ export function renderRoomsResult(
   theme: Theme,
 ): Component {
   if (isError) {
-    return new Text(theme.fg("error", `${INDENT_DIAMOND}◈ c2c · rooms error`), 0, 0);
+    return new Text(theme.fg("error", `${INDENT_C2C}⧓ c2c · rooms error`), 0, 0);
   }
 
   const rooms = details.rooms ?? [];
   const container = new Container();
   const header = new Text(
-    INDENT_DIAMOND +
-      theme.fg("accent", "◈ c2c") +
+    INDENT_C2C +
+      theme.fg("accent", "⧓ c2c") +
       theme.fg("borderMuted", " · ") +
       theme.fg("text", "rooms") +
       (rooms.length > 0 ? theme.fg("muted", ` (${rooms.length})`) : ""),

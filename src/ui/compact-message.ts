@@ -2,7 +2,7 @@
  * Compact TUI message renderer for pi-c2c delivered messages.
  *
  * Collapses one or more inbound c2c envelopes into a single line:
- *   ◈ c2c · lyra-quill: build finished
+ *   ⧓ c2c · lyra-quill: build finished
  * Expands to show each message as `from_alias: body` so the full payload is
  * available on demand.
  *
@@ -33,6 +33,8 @@ const GLYPHS = {
   outgoing: "▲",
   broadcast: "✶",
   status: "●",
+  arrowLeft: "←",
+  arrowRight: "→",
 } as const;
 
 /** Route glyphs for the source broker/channel. */
@@ -48,6 +50,8 @@ const ASCII_GLYPHS = {
   outgoing: "^",
   broadcast: "*",
   status: "o",
+  arrowLeft: "<-",
+  arrowRight: "->",
 } as const;
 
 const ASCII_ROUTES = {
@@ -68,6 +72,19 @@ function useAsciiGlyphs(): boolean {
 function routeForAlias(alias: string): keyof typeof ROUTES {
   if (alias.includes("#")) return "relay";
   return "sessions";
+}
+
+/** Direction arrow for compact message headers. */
+function arrowGlyph(direction: "incoming" | "outgoing" | "broadcast" | "status"): string {
+  const ascii = useAsciiGlyphs();
+  switch (direction) {
+    case "incoming":
+      return ascii ? ASCII_GLYPHS.arrowLeft : GLYPHS.arrowLeft;
+    case "outgoing":
+      return ascii ? ASCII_GLYPHS.arrowRight : GLYPHS.arrowRight;
+    default:
+      return "";
+  }
 }
 
 /** Build the colored prefix for a c2c message line. */
@@ -105,7 +122,7 @@ function buildPrefix(
     route === "relay" ? "accent" :
     "borderMuted";
 
-  return `${theme.fg(dirColor, dirGlyph)}${theme.fg(routeColor, routeGlyph)} `;
+  return `${theme.fg(dirColor, dirGlyph)}${theme.fg(routeColor, routeGlyph)}`;
 }
 
 interface MessageLike<T> {
@@ -230,21 +247,18 @@ export function buildCompactLine(
       : "incoming";
   const route = routeForAlias(primarySender);
 
-  const parts: string[] = [];
-  parts.push(" " + buildPrefix(direction, route, theme));
+  const prefix = buildPrefix(direction, route, theme);
+  const arrow = arrowGlyph(direction);
+  const arrowSpacer = arrow ? theme.fg("success", ` ${arrow} `) : " ";
+  const header = " " + theme.fg("accent", "⧓ c2c") + theme.fg("borderMuted", " · ") + prefix + arrowSpacer;
 
+  const bodyParts: string[] = [];
   if (count <= 1) {
-    // Primary sender in accent so it pops; status state carries its own
-    // semantic color in the snippet below.
-    if (primary?.event === "status") {
-      parts.push(theme.fg("accent", `${primarySender}`));
-    } else {
-      parts.push(theme.fg("accent", `${primarySender}`));
-    }
+    bodyParts.push(theme.fg("accent", `${primarySender}`));
   } else {
-    parts.push(theme.fg("accent", `${count} messages`));
+    bodyParts.push(theme.fg("accent", `${count} messages`));
     if (senders.length > 0) {
-      parts.push(theme.fg("muted", `from ${senders.join(", ")}`));
+      bodyParts.push(theme.fg("muted", `from ${senders.join(", ")}`));
     }
   }
 
@@ -258,10 +272,10 @@ export function buildCompactLine(
         : direction === "outgoing"
           ? "dim"
           : "text";
-    parts.push(theme.fg(snippetColor, snippet));
+    bodyParts.push(theme.fg(snippetColor, snippet));
   }
 
-  return truncateToWidth(parts.join(theme.fg("borderMuted", " · ")), width);
+  return truncateToWidth(header + bodyParts.join(theme.fg("borderMuted", " · ")), width);
 }
 
 /** Build the expanded multi-line representation. */
@@ -287,11 +301,14 @@ export function buildExpandedComponent(
       : "incoming";
   const route = routeForAlias(primarySender);
   const prefix = buildPrefix(direction, route, theme);
+  const arrow = arrowGlyph(direction);
+  const arrowSpacer = arrow ? theme.fg("success", ` ${arrow} `) : " ";
+  const headerPrefix = theme.fg("accent", "⧓ c2c") + theme.fg("borderMuted", " · ") + prefix + arrowSpacer;
   const header = count <= 1
     ? primary?.event === "status"
-      ? `${prefix}${KIND} · status from ${primarySender}`
-      : `${prefix}${KIND} · message from ${primarySender}`
-    : `${prefix}${KIND} · ${count} messages`;
+      ? `${headerPrefix}status from ${primarySender}`
+      : `${headerPrefix}message from ${primarySender}`
+    : `${headerPrefix}${count} messages`;
 
   const container = new Container();
   container.addChild(new Text(theme.fg("accent", header), 1, 0));

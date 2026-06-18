@@ -115,6 +115,21 @@ describe("buildCompactLine", () => {
     assert.ok(line.includes("◎"));
   });
 
+  it("prefixes incoming messages with ⧓ c2c · and a left arrow", () => {
+    const msg = makeMessage(envelope("lyra-quill", "hello there"));
+    const line = buildCompactLine(msg, plainTheme, 80);
+    assert.match(line, /⧓ c2c · ▼◎ ← lyra-quill/);
+  });
+
+  it("prefixes outgoing messages with ⧓ c2c · and a right arrow", () => {
+    const msg = makeMessage(envelope("pi-313d8c", "on it"), {
+      senders: ["pi-313d8c"],
+      selfAlias: "pi-313d8c",
+    });
+    const line = buildCompactLine(msg, plainTheme, 80);
+    assert.match(line, /⧓ c2c · ▲◎ → pi-313d8c/);
+  });
+
   it("shows outgoing direction when sender matches selfAlias", () => {
     const msg = makeMessage(envelope("pi-313d8c", "on it"), {
       senders: ["pi-313d8c"],

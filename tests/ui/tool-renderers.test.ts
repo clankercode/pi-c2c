@@ -34,7 +34,7 @@ describe("renderSendCall", () => {
     const lines = renderSendCall({ kind: "dm", target: "lyra-quill" }, plainTheme).render(80);
     assert.strictEqual(lines.length, 1);
     assert.ok(lines[0].includes("send → lyra-quill"));
-    assert.ok(lines[0].includes("◈ c2c"));
+    assert.ok(lines[0].includes("⧓ c2c"));
   });
 
   it("renders a broadcast call", () => {
