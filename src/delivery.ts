@@ -35,26 +35,84 @@ export function sanitizeContent(content: string): string {
 }
 
 /**
+ * Build the `<system-reminder>…</system-reminder>` block that follows an
+ * inbound c2c envelope. The block names the sender, gives the exact tool
+ * call shape, and falls back to the generic MCP tool name so the agent
+ * doesn't have to infer any of it from the envelope attributes alone.
+ *
+ * The peer-controlled envelope attribute `from` is interpolated into a
+ * code-fenced example string (backticks around it) so even a
+ * prompt-injection peer that forges a misleading alias cannot escape the
+ * fenced region and re-instruct the agent. Sender `from` is also
+ * backslash-escaped to neutralise backticks and backslashes inside the
+ * example literal.
+ *
+ * Keep this terse. The reminder is shown verbatim inside every injected
+ * c2c message — long reminders add noise that makes agents ignore them.
+ */
+function buildReplyReminder(from: string, kind: "dm" | "room" = "dm"): string {
+  const safeFrom = from.replace(/[`\\]/g, "\\$&");
+  const tool = kind === "room" ? "c2c_pi_send_room" : "c2c_pi_send";
+  const genericTool = kind === "room" ? "c2c_send_room" : "c2c_send";
+  const targetArg = kind === "room"
+    ? `room="<room id>"`
+    : `target="${safeFrom}"`;
+  const fallbackTarget = kind === "room"
+    ? "(the room you received this from)"
+    : `"${safeFrom}"`;
+  return (
+    `<system-reminder>\n` +
+    `You received a c2c ${kind === "room" ? "room" : "direct"} message from \`${safeFrom}\`.\n` +
+    `To reply, call ${tool}(${targetArg}, body="<your reply>").\n` +
+    `If ${tool} is unavailable in this session, the generic MCP tool ${genericTool} works the same way (target=${fallbackTarget}).\n` +
+    `Do NOT reply in plain text — the peer will not see it.\n` +
+    `</system-reminder>`
+  );
+}
+
+/**
  * Render a single message as a c2c envelope for injection. Identical shape to
  * the OpenCode plugin's `formatEnvelope` (including `reply_via="c2c_pi_send"`,
  * which is this extension's send-tool name). Peer content is sanitized so it
  * cannot break out of or forge the envelope.
  *
+ * A `<system-reminder>` block follows the envelope. It is the canonical
+ * reply hint — see `buildReplyReminder`. We do NOT rely on the
+ * `reply_via="…"` envelope attribute alone: an LLM scanning a long
+ * transcript can miss it, and the attribute is metadata the model has
+ * to actively interpret. The reminder is a separate, visible block.
+ *
  * `nonurgent` defaults to `msg.nonurgent` (the structured field on the
  * C2cMessage from the broker), with an explicit override via the parameter.
  * The receiver uses this to pick a delivery mode: nonurgent messages use
- * followUp (no interrupt), urgent messages use triggerTurn + steer.
+ * followUp (no interrupt, no steer), urgent messages use triggerTurn + steer.
+ *
+ * `kind` switches the reminder between DM (uses `c2c_pi_send`) and room
+ * (uses `c2c_pi_send_room`). Default is DM for back-compat — callers that
+ * know a message arrived via a room MUST pass `kind: "room"` so the
+ * reminder tells the agent to call the room tool.
  */
-export function formatEnvelope(msg: C2cMessage, selfAlias?: string, nonurgent?: boolean): string {
+export function formatEnvelope(
+  msg: C2cMessage,
+  selfAlias?: string,
+  nonurgent?: boolean,
+  kind: "dm" | "room" = "dm",
+): string {
   const from = msg.from_alias || "unknown";
   const to = msg.to_alias || selfAlias || "me";
   const effective = nonurgent ?? msg.nonurgent ?? false;
   const nonurgentAttr = effective ? ' nonurgent="true"' : "";
+  // The `reply_via` attribute is set to the pi-specific tool when the
+  // extension is loaded (matches the canonical OpenCode plugin shape, just
+  // with our tool name). Room replies use the room tool name so a sibling
+  // extension reading the attribute knows the right tool without parsing
+  // the reminder block.
+  const replyVia = kind === "room" ? "c2c_pi_send_room" : "c2c_pi_send";
   return (
     `<c2c event="message" from="${from}" to="${to}" source="broker"` +
     `${nonurgentAttr} ` +
-    `reply_via="c2c_pi_send" action_after="continue">\n${sanitizeContent(msg.content)}\n</c2c>` +
-    `\n<system-reminder>To reply you must use c2c_pi_send.</system-reminder>`
+    `reply_via="${replyVia}" action_after="continue">\n${sanitizeContent(msg.content)}\n</c2c>\n` +
+    buildReplyReminder(from, kind)
   );
 }
 
