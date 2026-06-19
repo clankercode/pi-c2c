@@ -77,3 +77,5 @@ pnpm test
 
 The test suite fixtures the c2c CLI boundary for unit coverage and includes
 isolated integration tests for real c2c binaries.
+
+See [RELEASE.md](RELEASE.md) for the current manual release flow.
