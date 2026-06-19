@@ -1,6 +1,6 @@
 {
   "name": "pi-c2c",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pi extension that natively integrates c2c — peer-to-peer messaging between AI coding agents. Adds c2c send/list/rooms tools, slash commands, and background auto-delivery of inbound messages straight into pi's transcript.",
   "type": "module",
   "private": false,
