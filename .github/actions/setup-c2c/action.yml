@@ -1,0 +1,42 @@
+name: Set up c2c
+description: >-
+  Download the c2c CLI binary from the clankercode/c2c GitHub releases and add
+  it to PATH, so the integration tests run against the real binary instead of
+  self-skipping. c2c is an OCaml binary (not on npm), so we fetch the published
+  linux-x64 release tarball and verify its checksum.
+
+inputs:
+  version:
+    description: "c2c release tag to install (e.g. v0.8.1). Empty = latest release."
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Download and install c2c
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        C2C_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        dest="$RUNNER_TEMP/c2c-bin"
+        mkdir -p "$dest"
+        cd "$dest"
+        if [ -n "$C2C_VERSION" ]; then
+          gh release download "$C2C_VERSION" -R clankercode/c2c \
+            --pattern "c2c-*-linux-x64.tar.gz" --pattern "SHA256SUMS"
+        else
+          gh release download -R clankercode/c2c \
+            --pattern "c2c-*-linux-x64.tar.gz" --pattern "SHA256SUMS"
+        fi
+        sha256sum -c SHA256SUMS --ignore-missing
+        tar xzf c2c-*-linux-x64.tar.gz
+        bin="$(find "$dest" -type f -name c2c -perm -u+x | head -1)"
+        if [ -z "$bin" ]; then
+          echo "::error::c2c binary not found in the downloaded release tarball"
+          exit 1
+        fi
+        echo "$(dirname "$bin")" >> "$GITHUB_PATH"
+        "$bin" --version

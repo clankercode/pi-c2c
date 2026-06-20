@@ -33,5 +33,11 @@ jobs:
       - name: Typecheck
         run: pnpm check
 
+      # Install the real c2c binary so the integration tests run instead of
+      # self-skipping. c2c is an OCaml binary (not on npm) — fetched from its
+      # GitHub releases.
+      - name: Set up c2c
+        uses: ./.github/actions/setup-c2c
+
       - name: Test
         run: pnpm test

@@ -35,6 +35,9 @@ jobs:
       - name: Typecheck
         run: pnpm check
 
+      - name: Set up c2c
+        uses: ./.github/actions/setup-c2c
+
       - name: Test
         run: pnpm test
 
