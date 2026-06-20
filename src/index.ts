@@ -764,13 +764,14 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   function buildPeerListResult(
     merged: ReturnType<typeof mergePeerLists>,
     includeDead: boolean,
+    revealHint?: string,
   ): { details: ListToolDetails; text: string } {
     const details = buildPeerListDetails(
       merged,
       includeDead,
       (alias) => peerStatusStore.get(alias)?.state,
     );
-    return { details, text: formatPeerListText(details) };
+    return { details, text: formatPeerListText(details, revealHint) };
   }
 
   // --- tools (LLM-callable) -------------------------------------------------
@@ -856,7 +857,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     async execute(_id, { target, body, nonurgent }) {
       const r = ready();
       const details: SendToolDetails = { kind: "dm", target, body, nonurgent: nonurgent ?? false };
-      if (!r) return toolText(notReadyText, details);
+      if (!r) return toolText(notReadyText, { ...details, error: "not registered" });
       // Try each transport in order until one accepts the target.
       const hops = buildSendHops({ sessionsBrokerRoot, relayRegistered: relayRegistered && !!relayAddress });
       const result = await executeSend(r.cli, hops, target, body, relayAddress, r.identity.alias);
@@ -866,7 +867,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         const tag = nonurgent ? " (nonurgent)" : "";
         return toolText(`Sent to ${target} (via ${result.via})${tag}.`, details);
       }
-      return toolText(`c2c_pi_send failed (${result.via}): ${result.message}`, details);
+      return toolText(`c2c_pi_send failed (${result.via}): ${result.message}`, { ...details, error: "failed" });
     },
     renderCall: () => renderEmptyCall(),
     renderResult: (result, _options, theme, context) =>
@@ -891,13 +892,13 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     async execute(_id, { body, exclude }) {
       const r = ready();
       const details: SendToolDetails = { kind: "broadcast", body, via: "sessions" };
-      if (!r) return toolText(notReadyText, details);
+      if (!r) return toolText(notReadyText, { ...details, error: "not registered" });
       try {
         await r.cli.sendAll(body, { exclude, from: r.identity.alias });
         telemetry.recordSent("(broadcast)", "broadcast");
         return toolText("Broadcast sent.", details);
       } catch (e) {
-        return toolText(`c2c_pi_send_all failed: ${e instanceof Error ? e.message : String(e)}`, details);
+        return toolText(`c2c_pi_send_all failed: ${e instanceof Error ? e.message : String(e)}`, { ...details, error: "failed" });
       }
     },
     renderCall: () => renderEmptyCall(),
@@ -921,13 +922,13 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     renderShell: "self",
     async execute(_id, { include_dead }) {
       const r = ready();
-      if (!r) return toolText(notReadyText, { peers: [] } as ListToolDetails);
+      if (!r) return toolText(notReadyText, { peers: [], error: "not registered" } as ListToolDetails);
       try {
         const merged = await fetchMergedPeers(r);
         const { details, text } = buildPeerListResult(merged, include_dead === true);
         return toolText(text, details);
       } catch (e) {
-        return toolText(`c2c_pi_list failed: ${e instanceof Error ? e.message : String(e)}`, { peers: [] } as ListToolDetails);
+        return toolText(`c2c_pi_list failed: ${e instanceof Error ? e.message : String(e)}`, { peers: [], error: "failed" } as ListToolDetails);
       }
     },
     renderCall: () => renderEmptyCall(),
@@ -943,7 +944,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     renderShell: "self",
     async execute() {
       const r = ready();
-      if (!r) return toolText(notReadyText, { messages: [] } as InboxToolDetails);
+      if (!r) return toolText(notReadyText, { messages: [], error: "not registered" } as InboxToolDetails);
       const sid = r.identity.sessionId;
       try {
         // Render the result BEFORE committing (markDelivered + clearSpool),
@@ -976,7 +977,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         });
         return toolText(text, { messages } as InboxToolDetails);
       } catch (e) {
-        return toolText(`c2c_pi_poll_inbox failed: ${e instanceof Error ? e.message : String(e)}`, { messages: [] } as InboxToolDetails);
+        return toolText(`c2c_pi_poll_inbox failed: ${e instanceof Error ? e.message : String(e)}`, { messages: [], error: "failed" } as InboxToolDetails);
       }
     },
     renderCall: () => renderEmptyCall(),
@@ -991,7 +992,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     parameters: Type.Object({}),
     renderShell: "self",
     async execute() {
-      if (!identity) return toolText(notReadyText, { alias: "", sessionId: "", registered: false } as WhoamiToolDetails);
+      if (!identity) return toolText(notReadyText, { alias: "", sessionId: "", registered: false, error: "not registered" } as WhoamiToolDetails);
       const details: WhoamiToolDetails = {
         alias: identity.alias,
         sessionId: identity.sessionId,
@@ -1036,12 +1037,12 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     async execute(_id, { room }) {
       const r = ready();
       const details: RoomToolDetails = { room, joined: true };
-      if (!r) return toolText(notReadyText, details);
+      if (!r) return toolText(notReadyText, { ...details, error: "not registered" });
       try {
         await r.cli.joinRoom(room, r.identity.alias);
         return toolText(`Joined room ${room}.`, details);
       } catch (e) {
-        return toolText(`c2c_pi_join_room failed: ${e instanceof Error ? e.message : String(e)}`, details);
+        return toolText(`c2c_pi_join_room failed: ${e instanceof Error ? e.message : String(e)}`, { ...details, error: "failed" });
       }
     },
     renderCall: () => renderEmptyCall(),
@@ -1065,13 +1066,13 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     async execute(_id, { room, body }) {
       const r = ready();
       const details: SendToolDetails = { kind: "room", room, body, via: "sessions" };
-      if (!r) return toolText(notReadyText, details);
+      if (!r) return toolText(notReadyText, { ...details, error: "not registered" });
       try {
         await r.cli.sendRoom(room, body, { from: r.identity.alias });
         telemetry.recordSent(`room:${room}`, "room");
         return toolText(`Sent to room ${room}.`, details);
       } catch (e) {
-        return toolText(`c2c_pi_send_room failed: ${e instanceof Error ? e.message : String(e)}`, details);
+        return toolText(`c2c_pi_send_room failed: ${e instanceof Error ? e.message : String(e)}`, { ...details, error: "failed" });
       }
     },
     renderCall: () => renderEmptyCall(),
@@ -1098,6 +1099,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           broker: "not connected",
           crossRepo: "unknown",
           relay: "unknown",
+          error: "not registered",
         } as LocalInfoToolDetails);
       }
 
@@ -1133,13 +1135,13 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     renderShell: "self",
     async execute() {
       const r = ready();
-      if (!r) return toolText(notReadyText, { rooms: [] } as RoomsToolDetails);
+      if (!r) return toolText(notReadyText, { rooms: [], error: "not registered" } as RoomsToolDetails);
       try {
         const rooms = await r.cli.myRooms();
         const details: RoomsToolDetails = { rooms };
         return toolText(rooms.length ? rooms.join("\n") : "(no rooms joined)", details);
       } catch (e) {
-        return toolText(`c2c_pi_rooms failed: ${e instanceof Error ? e.message : String(e)}`, { rooms: [] } as RoomsToolDetails);
+        return toolText(`c2c_pi_rooms failed: ${e instanceof Error ? e.message : String(e)}`, { rooms: [], error: "failed" } as RoomsToolDetails);
       }
     },
     renderCall: () => renderEmptyCall(),
@@ -1377,7 +1379,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const includeDead = /\b(all|dead)\b/i.test(args.trim());
       try {
         const merged = await fetchMergedPeers(r);
-        const { details, text } = buildPeerListResult(merged, includeDead);
+        const { details, text } = buildPeerListResult(merged, includeDead, "run `/c2c-peers all`");
         if (details.peers.length === 0) return ctx.ui.notify(text, "info");
         await ctx.ui.select(text, ["Close"]);
       } catch (e) {

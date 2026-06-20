@@ -26,7 +26,20 @@ const TREE_INDENT = "  ";
 
 // ── detail types (consumed by the extension for tool execute return) ───────────
 
-export interface SendToolDetails {
+/**
+ * Mixed into every tool's details. When set, the tool call did NOT succeed
+ * (e.g. not registered, or a caught error) and the renderer shows
+ * `⧓ c2c.<action> · <error>` instead of a success-looking line. This is
+ * needed because a custom tool's `execute` returning normally never sets pi's
+ * `context.isError` (only a thrown error does), so the success/failure signal
+ * must travel in `details`.
+ */
+export interface ToolResultStatus {
+  /** Short failure note ("not registered", "failed", …); absent on success. */
+  error?: string;
+}
+
+export interface SendToolDetails extends ToolResultStatus {
   kind: "dm" | "broadcast" | "room";
   target?: string;
   room?: string;
@@ -53,7 +66,7 @@ export interface ListPeerInfo {
   state?: string;
 }
 
-export interface ListToolDetails {
+export interface ListToolDetails extends ToolResultStatus {
   peers: ListPeerInfo[];
   /**
    * Number of dead/unreachable peers hidden by the live-only default. Shown
@@ -68,33 +81,33 @@ export interface InboxMessageInfo {
   preview: string;
 }
 
-export interface InboxToolDetails {
+export interface InboxToolDetails extends ToolResultStatus {
   messages: InboxMessageInfo[];
 }
 
-export interface WhoamiToolDetails {
+export interface WhoamiToolDetails extends ToolResultStatus {
   alias: string;
   sessionId: string;
   registered: boolean;
 }
 
-export interface RoomToolDetails {
+export interface RoomToolDetails extends ToolResultStatus {
   room: string;
   joined?: boolean;
 }
 
-export interface RoomsToolDetails {
+export interface RoomsToolDetails extends ToolResultStatus {
   rooms: string[];
 }
 
-export interface StatusToolDetails {
+export interface StatusToolDetails extends ToolResultStatus {
   state?: string;
   since?: string;
   ttlMs?: number;
   registered: boolean;
 }
 
-export interface LocalInfoToolDetails {
+export interface LocalInfoToolDetails extends ToolResultStatus {
   alias: string;
   sessionId: string;
   broker: string;
@@ -123,9 +136,19 @@ function c2cActionLead(action: string, theme: Theme): string {
   return c2cActionPrefix(action, theme) + theme.fg("borderMuted", " · ");
 }
 
-/** A concise error row: `⧓ c2c.<action> · error`. */
-function c2cActionError(action: string, theme: Theme): Component {
-  return new Text(c2cActionLead(action, theme) + theme.fg("error", "error"), 0, 0);
+/** A concise failure row: `⧓ c2c.<action> · <message>`, message in error color. */
+function c2cActionError(action: string, theme: Theme, message = "error"): Component {
+  return new Text(c2cActionLead(action, theme) + theme.fg("error", message), 0, 0);
+}
+
+/**
+ * Failure note for a result, or undefined on success. A thrown tool error sets
+ * pi's `isError`; a normal return that failed carries `details.error`. Either
+ * way the renderer shows the failure instead of a misleading success line.
+ */
+function resultError(isError: boolean, details: ToolResultStatus | undefined): string | undefined {
+  if (isError) return "error";
+  return details?.error;
 }
 
 /**
@@ -189,7 +212,8 @@ function previewBody(body: string | undefined, maxLen = 60): string {
  */
 export function renderSendResult(details: SendToolDetails, isError: boolean, theme: Theme): Component {
   const action = sendAction(details.kind);
-  if (isError) return c2cActionError(action, theme);
+  const err = resultError(isError, details);
+  if (err) return c2cActionError(action, theme, err);
 
   const parts: string[] = [c2cActionLead(action, theme)];
   parts.push(sendPrefix(details.kind, details.via, theme));
@@ -394,7 +418,8 @@ function peerSuffixes(peer: ListPeerInfo, theme: Theme): string {
  *      ● lyra-quill  [cross-repo]
  */
 export function renderListResult(details: ListToolDetails, isError: boolean, theme: Theme): Component {
-  if (isError) return c2cActionError("list", theme);
+  const err = resultError(isError, details);
+  if (err) return c2cActionError("list", theme, err);
 
   const peers = details.peers ?? [];
   const rows = flattenPeerTree(buildPeerTree(peers));
@@ -435,12 +460,15 @@ export function renderListResult(details: ListToolDetails, isError: boolean, the
  * Mirrors the TUI tree using the same branch glyphs, no color. Appends a
  * "(N dead hidden)" note when relevant.
  */
-export function formatPeerListText(details: ListToolDetails): string {
+export function formatPeerListText(
+  details: ListToolDetails,
+  revealHint = "pass include_dead=true to show",
+): string {
   const peers = details.peers ?? [];
   const rows = flattenPeerTree(buildPeerTree(peers));
   const hiddenDead = details.hiddenDead ?? 0;
   if (rows.length === 0) {
-    return hiddenDead > 0 ? `No live peers (${hiddenDead} dead hidden).` : "No peers registered.";
+    return hiddenDead > 0 ? `No live peers (${hiddenDead} dead hidden, ${revealHint}).` : "No peers registered.";
   }
   const lines = rows.map(({ node, prefix }) => {
     const marker = node.alive ? "●" : "○";
@@ -448,7 +476,7 @@ export function formatPeerListText(details: ListToolDetails): string {
     const state = node.state ? `  [${node.state}]` : "";
     return `${prefix}${marker} ${node.alias}${tag}${state}`;
   });
-  if (hiddenDead > 0) lines.push(`(${hiddenDead} dead hidden — pass include_dead to show)`);
+  if (hiddenDead > 0) lines.push(`(${hiddenDead} dead hidden — ${revealHint})`);
   return lines.join("\n");
 }
 
@@ -465,7 +493,8 @@ export function renderInboxResult(
   isError: boolean,
   theme: Theme,
 ): Component {
-  if (isError) return c2cActionError("inbox", theme);
+  const err = resultError(isError, details);
+  if (err) return c2cActionError("inbox", theme, err);
 
   const messages = details.messages ?? [];
   const container = new Container();
@@ -501,7 +530,8 @@ export function renderWhoamiResult(
   isError: boolean,
   theme: Theme,
 ): Component {
-  if (isError) return c2cActionError("whoami", theme);
+  const err = resultError(isError, details);
+  if (err) return c2cActionError("whoami", theme, err);
 
   const status = details.registered
     ? theme.fg("success", "registered")
@@ -527,7 +557,8 @@ export function renderJoinRoomResult(
   isError: boolean,
   theme: Theme,
 ): Component {
-  if (isError) return c2cActionError("join", theme);
+  const err = resultError(isError, details);
+  if (err) return c2cActionError("join", theme, err);
 
   const line =
     c2cActionLead("join", theme) +
@@ -551,7 +582,8 @@ export function renderRoomsResult(
   isError: boolean,
   theme: Theme,
 ): Component {
-  if (isError) return c2cActionError("rooms", theme);
+  const err = resultError(isError, details);
+  if (err) return c2cActionError("rooms", theme, err);
 
   const rooms = details.rooms ?? [];
   const container = new Container();
@@ -582,7 +614,8 @@ export function renderStatusResult(
   isError: boolean,
   theme: Theme,
 ): Component {
-  if (isError) return c2cActionError("status", theme);
+  const err = resultError(isError, details);
+  if (err) return c2cActionError("status", theme, err);
   if (!details.registered || !details.state) {
     return new Text(c2cActionLead("status", theme) + theme.fg("warning", "not registered"), 0, 0);
   }
@@ -601,7 +634,8 @@ export function renderLocalInfoResult(
   isError: boolean,
   theme: Theme,
 ): Component {
-  if (isError) return c2cActionError("local", theme);
+  const err = resultError(isError, details);
+  if (err) return c2cActionError("local", theme, err);
 
   const container = new Container();
   container.addChild(

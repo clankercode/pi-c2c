@@ -132,6 +132,44 @@ describe("renderSendResult", () => {
   });
 });
 
+describe("failure rendering via details.error (no thrown isError)", () => {
+  it("renders a failed send as an error line, not a fake success", () => {
+    const lines = renderSendResult(
+      { kind: "dm", target: "lyra-quill", error: "not registered" },
+      false,
+      plainTheme,
+    ).render(80);
+    assertActionPrefix(lines[0], "send");
+    assert.ok(lines[0].includes("not registered"));
+    assert.ok(!lines[0].includes("→ lyra-quill"), "must not render the success arrow on failure");
+  });
+
+  it("renders a failed join as an error line, not 'joined room'", () => {
+    const lines = renderJoinRoomResult(
+      { room: "swarm-lounge", joined: true, error: "failed" },
+      false,
+      plainTheme,
+    ).render(80);
+    assertActionPrefix(lines[0], "join");
+    assert.ok(lines[0].includes("failed"));
+    assert.ok(!lines[0].includes("joined"), "must not render success on failure");
+  });
+
+  it("renders a failed list as an error line, not 'no peers registered'", () => {
+    const joined = renderListResult({ peers: [], error: "failed" }, false, plainTheme).render(80).join("\n");
+    assert.ok(joined.includes("failed"));
+    assert.ok(!joined.includes("no peers registered"));
+  });
+
+  it("colors the failure message with the error color", () => {
+    const theme = makeRecordingTheme();
+    renderSendResult({ kind: "dm", target: "x", error: "not registered" }, false, theme).render(80);
+    const ev = theme.events.find((e) => e.text === "not registered");
+    assert.ok(ev, "expected the failure message to be rendered");
+    assert.strictEqual(ev!.color, "error");
+  });
+});
+
 // ── peer tree helpers ──────────────────────────────────────────────────────
 
 describe("parseChildAlias", () => {
@@ -363,13 +401,25 @@ describe("formatPeerListText", () => {
     assert.ok(text.includes("[cross-repo]"));
   });
 
-  it("appends a dead-hidden note", () => {
+  it("appends a dead-hidden note with the default (tool) reveal hint", () => {
     const text = formatPeerListText({ peers: [{ alias: "alpha", alive: true }], hiddenDead: 3 });
     assert.ok(text.includes("3 dead hidden"));
+    assert.ok(text.includes("include_dead"), "tool hint names the include_dead param");
+  });
+
+  it("uses a caller-supplied reveal hint (e.g. the slash command's arg)", () => {
+    const text = formatPeerListText(
+      { peers: [{ alias: "alpha", alive: true }], hiddenDead: 3 },
+      "run `/c2c-peers all`",
+    );
+    assert.ok(text.includes("/c2c-peers all"));
+    assert.ok(!text.includes("include_dead"), "command hint must not mention the tool param");
   });
 
   it("reports no live peers when empty after filtering", () => {
-    assert.strictEqual(formatPeerListText({ peers: [], hiddenDead: 5 }), "No live peers (5 dead hidden).");
+    const empty = formatPeerListText({ peers: [], hiddenDead: 5 });
+    assert.ok(empty.startsWith("No live peers (5 dead hidden"), empty);
+    assert.ok(empty.includes("include_dead"), empty);
     assert.strictEqual(formatPeerListText({ peers: [] }), "No peers registered.");
   });
 });
