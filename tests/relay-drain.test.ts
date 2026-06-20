@@ -91,6 +91,10 @@ let relayPort: number | null = null;
 let relayStderrBuf = "";
 
 before(async () => {
+  // The test below self-skips without c2c, but this hook still runs — guard it
+  // so we never spawn a missing binary (whose async ENOENT would otherwise
+  // leak after the skipped test and fail the whole run, e.g. on CI).
+  if (!HAVE_C2C) return;
   perRepoBroker = fs.mkdtempSync(path.join(os.tmpdir(), "pi-c2c-drain-local-"));
   sessionsBroker = fs.mkdtempSync(path.join(os.tmpdir(), "pi-c2c-drain-sess-"));
   relayDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-c2c-drain-relay-"));
@@ -150,6 +154,7 @@ before(async () => {
 });
 
 after(() => {
+  if (!HAVE_C2C) return;
   // Kill the relay's whole process group (children included).
   if (relayProc && relayProc.pid && !relayProc.killed) {
     try {
