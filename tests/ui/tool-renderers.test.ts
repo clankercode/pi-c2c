@@ -2,22 +2,25 @@ import { describe, it } from "node:test";
 import assert from "node:assert";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
+  buildPeerTree,
+  flattenPeerTree,
+  formatPeerListText,
+  parseChildAlias,
+  renderEmptyCall,
   renderInboxResult,
   renderJoinRoomResult,
   renderListResult,
   renderLocalInfoResult,
   renderRoomsResult,
-  renderSendCall,
   renderSendResult,
   renderStatusResult,
-  renderToolCall,
   renderWhoamiResult,
   type InboxToolDetails,
+  type ListPeerInfo,
   type ListToolDetails,
   type LocalInfoToolDetails,
   type RoomToolDetails,
   type RoomsToolDetails,
-  type SendToolDetails,
   type StatusToolDetails,
   type WhoamiToolDetails,
 } from "../../src/ui/tool-renderers.ts";
@@ -34,50 +37,30 @@ const plainTheme = {
   strikethrough: (text: string) => text,
 } as unknown as Theme;
 
-function assertC2cPrefix(line: string) {
-  assert.ok(line.startsWith(" ⧓ c2c · "), `expected compact c2c prefix, got: ${line}`);
-  assert.ok(!line.startsWith("⧓⧓ c2c"), `expected no doubled marker, got: ${line}`);
+/** Assert a single result line leads with `⧓ c2c.<action> · `, no doubled marker. */
+function assertActionPrefix(line: string, action: string) {
+  const want = ` ⧓ c2c.${action} · `;
+  assert.ok(line.startsWith(want), `expected lead "${want}", got: ${line}`);
+  assert.ok(!line.includes("⧓⧓"), `expected no doubled marker, got: ${line}`);
+  assert.ok(!line.includes("c2c_pi_"), `expected no raw tool name, got: ${line}`);
 }
 
 function text(line: string) {
   return line.trimEnd();
 }
 
-describe("renderToolCall", () => {
-  it("renders a compact generic c2c call row", () => {
-    const lines = renderToolCall("list peers", plainTheme).render(80);
-    assert.strictEqual(text(lines[0]), " ⧓ c2c · list peers");
-  });
-});
-
-describe("renderSendCall", () => {
-  it("renders a DM call", () => {
-    const lines = renderSendCall({ kind: "dm", target: "lyra-quill" }, plainTheme).render(80);
-    assert.strictEqual(lines.length, 1);
-    assert.strictEqual(text(lines[0]), " ⧓ c2c · send → lyra-quill");
-    assert.ok(lines[0].includes("send → lyra-quill"));
-  });
-
-  it("renders raw pi DM args as a DM call without a stray prefix-only row", () => {
-    const lines = renderSendCall({ target: "pi-d19290-a6fc18a" }, plainTheme).render(80);
-    assert.deepStrictEqual(lines.map(text), [" ⧓ c2c · send → pi-d19290-a6fc18a"]);
-  });
-
-  it("renders a broadcast call", () => {
-    const lines = renderSendCall({ kind: "broadcast" }, plainTheme).render(80);
-    assert.strictEqual(text(lines[0]), " ⧓ c2c · broadcast");
-  });
-
-  it("renders a room send call", () => {
-    const lines = renderSendCall({ kind: "room", room: "swarm-lounge" }, plainTheme).render(80);
-    assert.strictEqual(text(lines[0]), " ⧓ c2c · send to room swarm-lounge");
+describe("renderEmptyCall", () => {
+  it("renders no visible lines (suppresses the raw-tool-name fallback)", () => {
+    const lines = renderEmptyCall().render(80);
+    const visible = lines.filter((l) => l.trim().length > 0);
+    assert.strictEqual(visible.length, 0, `expected no visible call lines, got: ${JSON.stringify(lines)}`);
   });
 });
 
 describe("renderSendResult", () => {
-  it("renders a DM success", () => {
+  it("renders a DM success leading with c2c.send", () => {
     const lines = renderSendResult({ kind: "dm", target: "lyra-quill", via: "sessions" }, false, plainTheme).render(80);
-    assertC2cPrefix(lines[0]);
+    assertActionPrefix(lines[0], "send");
     assert.ok(lines[0].includes("→ lyra-quill"));
     assert.ok(lines[0].includes("▲"));
     assert.ok(lines[0].includes("◎"));
@@ -89,29 +72,28 @@ describe("renderSendResult", () => {
       false,
       plainTheme,
     ).render(120);
-    assertC2cPrefix(lines[0]);
+    assertActionPrefix(lines[0], "send");
     assert.ok(lines[0].includes("→ lyra-quill"));
     assert.ok(lines[0].includes("hello world"));
     assert.ok(lines[0].includes("…"));
     assert.ok(!lines[0].includes("should be truncated"));
   });
 
-  it("renders a DM success with short body preview unchanged", () => {
+  it("renders a DM success with short body preview over relay", () => {
     const lines = renderSendResult(
       { kind: "dm", target: "lyra-quill", via: "relay", body: "hi" },
       false,
       plainTheme,
     ).render(80);
-    assertC2cPrefix(lines[0]);
+    assertActionPrefix(lines[0], "send");
     assert.ok(lines[0].includes("→ lyra-quill"));
     assert.ok(lines[0].includes("hi"));
     assert.ok(lines[0].includes("⇄"));
   });
 
-  it("renders a broadcast success", () => {
+  it("renders a broadcast success leading with c2c.send-all", () => {
     const lines = renderSendResult({ kind: "broadcast", via: "sessions" }, false, plainTheme).render(80);
-    assertC2cPrefix(lines[0]);
-    assert.ok(lines[0].includes("broadcast"));
+    assertActionPrefix(lines[0], "send-all");
     assert.ok(lines[0].includes("✶"));
   });
 
@@ -121,14 +103,14 @@ describe("renderSendResult", () => {
       false,
       plainTheme,
     ).render(80);
-    assert.ok(lines[0].includes("broadcast"));
+    assertActionPrefix(lines[0], "send-all");
     assert.ok(lines[0].includes("all hands"));
   });
 
-  it("renders a room send success", () => {
+  it("renders a room send success leading with c2c.send-room", () => {
     const lines = renderSendResult({ kind: "room", room: "swarm-lounge", via: "sessions" }, false, plainTheme).render(80);
-    assertC2cPrefix(lines[0]);
-    assert.ok(lines[0].includes("→ room swarm-lounge"));
+    assertActionPrefix(lines[0], "send-room");
+    assert.ok(lines[0].includes("→ swarm-lounge"));
   });
 
   it("renders a room send success with body preview", () => {
@@ -137,58 +119,201 @@ describe("renderSendResult", () => {
       false,
       plainTheme,
     ).render(80);
-    assert.ok(lines[0].includes("→ room swarm-lounge"));
+    assertActionPrefix(lines[0], "send-room");
+    assert.ok(lines[0].includes("→ swarm-lounge"));
     assert.ok(lines[0].includes("room message here"));
   });
 
   it("renders an error", () => {
     const lines = renderSendResult({ kind: "dm", target: "x" }, true, plainTheme).render(80);
-    assertC2cPrefix(lines[0]);
-    assert.ok(lines[0].includes("send error"));
+    assertActionPrefix(lines[0], "send");
+    assert.ok(lines[0].includes("error"));
+  });
+});
+
+// ── peer tree helpers ──────────────────────────────────────────────────────
+
+describe("parseChildAlias", () => {
+  it("extracts the parent from a subagent alias", () => {
+    assert.deepStrictEqual(parseChildAlias("pi-d19290-a6fc18a"), { parentAlias: "pi-d19290" });
+  });
+
+  it("preserves the relay @host suffix on the parent", () => {
+    assert.deepStrictEqual(
+      parseChildAlias("pi-d19290-a6fc18a@abc123def456"),
+      { parentAlias: "pi-d19290@abc123def456" },
+    );
+  });
+
+  it("returns null for a non-subagent alias", () => {
+    assert.strictEqual(parseChildAlias("pi-0b3f66"), null);
+    assert.strictEqual(parseChildAlias("lyra-quill"), null);
+  });
+
+  it("returns the immediate parent for a nested subagent", () => {
+    assert.deepStrictEqual(
+      parseChildAlias("pi-d19290-a111111-a222222"),
+      { parentAlias: "pi-d19290-a111111" },
+    );
+  });
+});
+
+describe("buildPeerTree", () => {
+  const parent: ListPeerInfo = { alias: "pi-d19290", alive: true };
+  const child1: ListPeerInfo = { alias: "pi-d19290-a111111", alive: true };
+  const child2: ListPeerInfo = { alias: "pi-d19290-a222222", alive: true };
+  const other: ListPeerInfo = { alias: "pi-0b3f66", alive: true };
+
+  it("nests subagents under their parent", () => {
+    const roots = buildPeerTree([parent, child1, child2, other]);
+    assert.deepStrictEqual(roots.map((r) => r.alias), ["pi-0b3f66", "pi-d19290"]);
+    const p = roots.find((r) => r.alias === "pi-d19290")!;
+    assert.deepStrictEqual(p.children.map((c) => c.alias), ["pi-d19290-a111111", "pi-d19290-a222222"]);
+  });
+
+  it("treats a child whose parent is absent as a root", () => {
+    const roots = buildPeerTree([child1, other]);
+    assert.deepStrictEqual(roots.map((r) => r.alias).sort(), ["pi-0b3f66", "pi-d19290-a111111"]);
+    assert.ok(roots.every((r) => r.children.length === 0));
+  });
+
+  it("sorts live before dead, then alphabetically", () => {
+    const roots = buildPeerTree([
+      { alias: "zeta", alive: true },
+      { alias: "alpha", alive: false },
+      { alias: "beta", alive: true },
+    ]);
+    assert.deepStrictEqual(roots.map((r) => r.alias), ["beta", "zeta", "alpha"]);
+  });
+});
+
+describe("flattenPeerTree", () => {
+  it("computes branch prefixes for a parent with two children", () => {
+    const roots = buildPeerTree([
+      { alias: "pi-d19290", alive: true },
+      { alias: "pi-d19290-a111111", alive: true },
+      { alias: "pi-d19290-a222222", alive: true },
+    ]);
+    const rows = flattenPeerTree(roots);
+    assert.deepStrictEqual(
+      rows.map((r) => [r.prefix, r.node.alias]),
+      [
+        ["", "pi-d19290"],
+        ["  ├─ ", "pi-d19290-a111111"],
+        ["  └─ ", "pi-d19290-a222222"],
+      ],
+    );
+  });
+
+  it("draws vertical guides for grandchildren under a non-last child", () => {
+    const roots = buildPeerTree([
+      { alias: "pi-d19290", alive: true },
+      { alias: "pi-d19290-a111111", alive: true },
+      { alias: "pi-d19290-a222222", alive: true },
+      { alias: "pi-d19290-a111111-a333333", alive: true },
+    ]);
+    const rows = flattenPeerTree(roots);
+    const grandchild = rows.find((r) => r.node.alias === "pi-d19290-a111111-a333333")!;
+    assert.strictEqual(grandchild.prefix, "  │  └─ ");
   });
 });
 
 describe("renderListResult", () => {
-  it("renders peers with count", () => {
+  it("renders flat live peers with count and tags", () => {
     const details: ListToolDetails = {
       peers: [
         { alias: "alpha", alive: true },
-        { alias: "beta", alive: false, tag: "cross" },
+        { alias: "beta", alive: true, tag: "cross" },
       ],
     };
     const lines = renderListResult(details, false, plainTheme).render(80);
     const joined = lines.join("\n");
-    assertC2cPrefix(lines[0]);
+    assertActionPrefix(lines[0], "list");
     assert.ok(joined.includes("peers (2)"));
     assert.ok(joined.includes("alpha"));
     assert.ok(joined.includes("beta"));
     assert.ok(joined.includes("[cross-repo]"));
   });
 
-  it("renders relay peers with [relay] tag", () => {
+  it("nests subagents under their parent with branch glyphs", () => {
     const details: ListToolDetails = {
       peers: [
-        { alias: "remote@a3b2c1d4e5f6", alive: true, tag: "relay" },
+        { alias: "pi-d19290", alive: true },
+        { alias: "pi-d19290-a111111", alive: true },
+        { alias: "pi-d19290-a222222", alive: true },
       ],
     };
     const lines = renderListResult(details, false, plainTheme).render(80);
     const joined = lines.join("\n");
+    assert.ok(joined.includes("peers (3)"));
+    assert.ok(joined.includes("├─"), `expected a branch glyph, got:\n${joined}`);
+    assert.ok(joined.includes("└─"), `expected a corner glyph, got:\n${joined}`);
+    // child rows are indented past the root row
+    const childLine = lines.find((l) => l.includes("pi-d19290-a111111"))!;
+    assert.ok(childLine.includes("├─") || childLine.includes("└─"));
+  });
+
+  it("shows a 'dead hidden' note in the header", () => {
+    const details: ListToolDetails = {
+      peers: [{ alias: "alpha", alive: true }],
+      hiddenDead: 12,
+    };
+    const lines = renderListResult(details, false, plainTheme).render(80);
+    assert.ok(lines[0].includes("peers (1)"));
+    assert.ok(lines[0].includes("12 dead hidden"));
+  });
+
+  it("renders relay peers with [relay] tag", () => {
+    const details: ListToolDetails = {
+      peers: [{ alias: "remote@a3b2c1d4e5f6", alive: true, tag: "relay" }],
+    };
+    const joined = renderListResult(details, false, plainTheme).render(80).join("\n");
     assert.ok(joined.includes("remote@a3b2c1d4e5f6"));
     assert.ok(joined.includes("[relay]"));
     assert.ok(!joined.includes("[cross-repo]"));
   });
 
-  it("renders empty peer list", () => {
-    const lines = renderListResult({ peers: [] }, false, plainTheme).render(80);
-    const joined = lines.join("\n");
+  it("renders an empty live list", () => {
+    const joined = renderListResult({ peers: [] }, false, plainTheme).render(80).join("\n");
     assert.ok(joined.includes("peers"));
     assert.ok(joined.includes("no peers registered"));
   });
 
+  it("says 'no live peers' when all peers were hidden as dead", () => {
+    const joined = renderListResult({ peers: [], hiddenDead: 7 }, false, plainTheme).render(80).join("\n");
+    assert.ok(joined.includes("no live peers"));
+    assert.ok(joined.includes("7 dead hidden"));
+  });
+
   it("renders an error", () => {
     const lines = renderListResult({ peers: [] }, true, plainTheme).render(80);
-    assertC2cPrefix(lines[0]);
-    assert.ok(lines[0].includes("peers error"));
+    assertActionPrefix(lines[0], "list");
+    assert.ok(lines[0].includes("error"));
+  });
+});
+
+describe("formatPeerListText", () => {
+  it("renders a plain-text tree the LLM can read", () => {
+    const text = formatPeerListText({
+      peers: [
+        { alias: "pi-d19290", alive: true },
+        { alias: "pi-d19290-a111111", alive: true },
+        { alias: "pi-0b3f66", alive: true, tag: "cross" },
+      ],
+    });
+    assert.ok(text.includes("● pi-d19290"));
+    assert.ok(text.includes("└─ ● pi-d19290-a111111"));
+    assert.ok(text.includes("[cross-repo]"));
+  });
+
+  it("appends a dead-hidden note", () => {
+    const text = formatPeerListText({ peers: [{ alias: "alpha", alive: true }], hiddenDead: 3 });
+    assert.ok(text.includes("3 dead hidden"));
+  });
+
+  it("reports no live peers when empty after filtering", () => {
+    assert.strictEqual(formatPeerListText({ peers: [], hiddenDead: 5 }), "No live peers (5 dead hidden).");
+    assert.strictEqual(formatPeerListText({ peers: [] }), "No peers registered.");
   });
 });
 
@@ -202,23 +327,22 @@ describe("renderInboxResult", () => {
     };
     const lines = renderInboxResult(details, false, plainTheme).render(80);
     const joined = lines.join("\n");
-    assertC2cPrefix(lines[0]);
+    assertActionPrefix(lines[0], "inbox");
     assert.ok(joined.includes("inbox (2)"));
     assert.ok(joined.includes("alpha:"));
     assert.ok(joined.includes("beta:"));
   });
 
   it("renders empty inbox", () => {
-    const lines = renderInboxResult({ messages: [] }, false, plainTheme).render(80);
-    const joined = lines.join("\n");
+    const joined = renderInboxResult({ messages: [] }, false, plainTheme).render(80).join("\n");
     assert.ok(joined.includes("inbox"));
     assert.ok(joined.includes("no messages"));
   });
 
   it("renders an error", () => {
     const lines = renderInboxResult({ messages: [] }, true, plainTheme).render(80);
-    assertC2cPrefix(lines[0]);
-    assert.ok(lines[0].includes("inbox error"));
+    assertActionPrefix(lines[0], "inbox");
+    assert.ok(lines[0].includes("error"));
   });
 });
 
@@ -227,7 +351,7 @@ describe("renderWhoamiResult", () => {
     const details: WhoamiToolDetails = { alias: "me", sessionId: "sess_1", registered: true };
     const lines = renderWhoamiResult(details, false, plainTheme).render(80);
     const joined = lines.join("\n");
-    assertC2cPrefix(lines[0]);
+    assertActionPrefix(lines[0], "whoami");
     assert.ok(joined.includes("me"));
     assert.ok(joined.includes("sess_1"));
     assert.ok(joined.includes("registered"));
@@ -236,13 +360,14 @@ describe("renderWhoamiResult", () => {
   it("renders unregistered identity", () => {
     const details: WhoamiToolDetails = { alias: "me", sessionId: "sess_1", registered: false };
     const lines = renderWhoamiResult(details, false, plainTheme).render(80);
+    assertActionPrefix(lines[0], "whoami");
     assert.ok(lines[0].includes("not registered"));
   });
 
   it("renders an error", () => {
     const lines = renderWhoamiResult({ alias: "", sessionId: "", registered: false }, true, plainTheme).render(80);
-    assertC2cPrefix(lines[0]);
-    assert.ok(lines[0].includes("whoami error"));
+    assertActionPrefix(lines[0], "whoami");
+    assert.ok(lines[0].includes("error"));
   });
 });
 
@@ -250,14 +375,15 @@ describe("renderJoinRoomResult", () => {
   it("renders joined room", () => {
     const details: RoomToolDetails = { room: "swarm-lounge", joined: true };
     const lines = renderJoinRoomResult(details, false, plainTheme).render(80);
-    assert.strictEqual(text(lines[0]), " ⧓ c2c · joined room swarm-lounge");
-    assert.ok(lines[0].includes("joined room swarm-lounge"));
+    assertActionPrefix(lines[0], "join");
+    assert.ok(lines[0].includes("joined"));
+    assert.ok(lines[0].includes("swarm-lounge"));
   });
 
   it("renders an error", () => {
     const lines = renderJoinRoomResult({ room: "x" }, true, plainTheme).render(80);
-    assertC2cPrefix(lines[0]);
-    assert.ok(lines[0].includes("join room error"));
+    assertActionPrefix(lines[0], "join");
+    assert.ok(lines[0].includes("error"));
   });
 });
 
@@ -266,23 +392,22 @@ describe("renderRoomsResult", () => {
     const details: RoomsToolDetails = { rooms: ["swarm-lounge", "ops"] };
     const lines = renderRoomsResult(details, false, plainTheme).render(80);
     const joined = lines.join("\n");
-    assertC2cPrefix(lines[0]);
+    assertActionPrefix(lines[0], "rooms");
     assert.ok(joined.includes("rooms (2)"));
     assert.ok(joined.includes("swarm-lounge"));
     assert.ok(joined.includes("ops"));
   });
 
   it("renders empty room list", () => {
-    const lines = renderRoomsResult({ rooms: [] }, false, plainTheme).render(80);
-    const joined = lines.join("\n");
+    const joined = renderRoomsResult({ rooms: [] }, false, plainTheme).render(80).join("\n");
     assert.ok(joined.includes("rooms"));
     assert.ok(joined.includes("no rooms joined"));
   });
 
   it("renders an error", () => {
     const lines = renderRoomsResult({ rooms: [] }, true, plainTheme).render(80);
-    assertC2cPrefix(lines[0]);
-    assert.ok(lines[0].includes("rooms error"));
+    assertActionPrefix(lines[0], "rooms");
+    assert.ok(lines[0].includes("error"));
   });
 });
 
@@ -295,12 +420,12 @@ describe("renderStatusResult", () => {
       registered: true,
     };
     const lines = renderStatusResult(details, false, plainTheme).render(80);
-    assert.strictEqual(text(lines[0]), " ⧓ c2c · idle · ttl 60000ms");
+    assert.strictEqual(text(lines[0]), " ⧓ c2c.status · idle · ttl 60000ms");
   });
 
   it("renders unregistered status", () => {
     const lines = renderStatusResult({ registered: false }, false, plainTheme).render(80);
-    assert.strictEqual(text(lines[0]), " ⧓ c2c · not registered");
+    assert.strictEqual(text(lines[0]), " ⧓ c2c.status · not registered");
   });
 });
 
@@ -315,7 +440,7 @@ describe("renderLocalInfoResult", () => {
       address: "pi-abc@a3b2c1d4e5f6",
     };
     const lines = renderLocalInfoResult(details, false, plainTheme).render(120);
-    assert.strictEqual(text(lines[0]), " ⧓ c2c · pi-abc (sess_1)");
+    assert.strictEqual(text(lines[0]), " ⧓ c2c.local · pi-abc (sess_1)");
     assert.ok(lines.join("\n").includes("address pi-abc@a3b2c1d4e5f6"));
   });
 });

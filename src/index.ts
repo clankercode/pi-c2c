@@ -56,17 +56,18 @@ import {
   setParentAlias,
 } from "./subagent.ts";
 import {
+  formatPeerListText,
+  renderEmptyCall,
   renderInboxResult,
   renderJoinRoomResult,
   renderListResult,
   renderLocalInfoResult,
   renderRoomsResult,
-  renderSendCall,
   renderSendResult,
   renderStatusResult,
-  renderToolCall,
   renderWhoamiResult,
   type InboxToolDetails,
+  type ListPeerInfo,
   type ListToolDetails,
   type LocalInfoToolDetails,
   type RoomToolDetails,
@@ -738,6 +739,44 @@ export default function c2cExtension(pi: ExtensionAPI): void {
 
   const notReadyText = "c2c: not registered yet (broker unreachable?). Run `/c2c-status` or `c2c doctor`.";
 
+  /**
+   * Fetch and merge every reachable peer (per-repo, sessions broker when
+   * cross-repo is enabled, public relay when registered). Shared by the
+   * `c2c_pi_list` tool and the `/c2c-peers` command so they never drift.
+   */
+  async function fetchMergedPeers(r: { cli: C2cCli }) {
+    const localPeers = await r.cli.list();
+    const remotePeers = sessionsBrokerRoot
+      ? await r.cli.list({ brokerRoot: sessionsBrokerRoot }).catch(() => [])
+      : [];
+    const relayPeers = relayRegistered
+      ? await r.cli.relayList().catch(() => [])
+      : [];
+    return mergePeerLists(localPeers, remotePeers, relayPeers);
+  }
+
+  /**
+   * Build the list-tool details + LLM/human text from merged peers. Live peers
+   * only unless `includeDead`; dead peers are counted into `hiddenDead` so the
+   * UI can acknowledge them without listing every zombie. Each shown peer is
+   * enriched with its last-known runtime state from the peer status store.
+   */
+  function buildPeerListResult(
+    merged: ReturnType<typeof mergePeerLists>,
+    includeDead: boolean,
+  ): { details: ListToolDetails; text: string } {
+    const shown = includeDead ? merged : merged.filter((p) => p.alive);
+    const hiddenDead = includeDead ? 0 : merged.length - shown.length;
+    const peers: ListPeerInfo[] = shown.map((p) => ({
+      alias: p.alias,
+      alive: p.alive,
+      tag: p.tag,
+      state: peerStatusStore.get(p.alias)?.state,
+    }));
+    const details: ListToolDetails = { peers, hiddenDead };
+    return { details, text: formatPeerListText(details) };
+  }
+
   // --- tools (LLM-callable) -------------------------------------------------
 
   pi.registerTool({
@@ -833,8 +872,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       }
       return toolText(`c2c_pi_send failed (${result.via}): ${result.message}`, details);
     },
-    renderCall: (args, theme) =>
-      renderSendCall({ kind: "dm", target: (args as { target?: string }).target }, theme),
+    renderCall: () => renderEmptyCall(),
     renderResult: (result, _options, theme, context) =>
       renderSendResult(
         (result.details as SendToolDetails) ?? (context.args as unknown as SendToolDetails),
@@ -866,7 +904,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         return toolText(`c2c_pi_send_all failed: ${e instanceof Error ? e.message : String(e)}`, details);
       }
     },
-    renderCall: (_args, theme) => renderSendCall({ kind: "broadcast" }, theme),
+    renderCall: () => renderEmptyCall(),
     renderResult: (result, _options, theme, context) =>
       renderSendResult(
         (result.details as SendToolDetails) ?? { kind: "broadcast" },
@@ -878,53 +916,25 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "c2c_pi_list",
     label: "c2c peers",
-    description: "List registered c2c peers and their liveness. Prefer this over the generic c2c_list tool: it merges per-repo, cross-repo (sessions broker), and public-relay peers (when registered) so one call shows every reachable alias, annotated with last known status (idle/processing/tool/input) when available.",
-    parameters: Type.Object({}),
+    description: "List LIVE registered c2c peers and their liveness. Merges per-repo, cross-repo (sessions broker), and public-relay peers (when registered) so one call shows every reachable alias, annotated with last known status (idle/processing/tool/input) when available. Subagents are nested under their parent. Dead/unreachable peers are hidden by default (their count is shown); pass include_dead=true to list them. Prefer this over the generic c2c_list tool.",
+    parameters: Type.Object({
+      include_dead: Type.Optional(
+        Type.Boolean({ description: "Include dead/unreachable peers. Default false (live peers only)." }),
+      ),
+    }),
     renderShell: "self",
-    async execute() {
+    async execute(_id, { include_dead }) {
       const r = ready();
       if (!r) return toolText(notReadyText, { peers: [] } as ListToolDetails);
       try {
-        // Per-repo broker list (always)
-        const localPeers = await r.cli.list();
-        // Cross-repo / sessions broker list (when enabled)
-        const remotePeers = sessionsBrokerRoot
-          ? await r.cli.list({ brokerRoot: sessionsBrokerRoot }).catch(() => [])
-          : [];
-        // Public relay list (when registered). Relay peers use the
-        // `<alias>@<host_hash>` format — we keep the full address as the
-        // dedup key so the LLM can DM them via `c2c_pi_send` (which now
-        // falls through to `c2c relay dm send`).
-        const relayPeers = relayRegistered
-          ? await r.cli.relayList().catch(() => [])
-          : [];
-        const merged = mergePeerLists(localPeers, remotePeers, relayPeers);
-        // Enrich each peer with the last-known status from the peerStatusStore.
-        // Statuses are TTL'd; a missing/expired entry yields no annotation.
-        const details: ListToolDetails = {
-          peers: merged.map((p) => {
-            const s = peerStatusStore.get(p.alias);
-            return {
-              alias: p.alias,
-              alive: p.alive,
-              tag: p.tag,
-              state: s?.state,
-            };
-          }),
-        };
-        if (merged.length === 0) return toolText("No peers registered.", details);
-        const lines = merged.map((p) => {
-          const status = peerStatusStore.get(p.alias);
-          const statusSuffix = status ? `  [${status.state}]` : "";
-          const crossSuffix = p.tag === "cross" ? "  [cross-repo]" : "";
-          return `${p.alive ? "●" : "○"} ${p.alias}${crossSuffix}${statusSuffix}`;
-        });
-        return toolText(lines.join("\n"), details);
+        const merged = await fetchMergedPeers(r);
+        const { details, text } = buildPeerListResult(merged, include_dead === true);
+        return toolText(text, details);
       } catch (e) {
         return toolText(`c2c_pi_list failed: ${e instanceof Error ? e.message : String(e)}`, { peers: [] } as ListToolDetails);
       }
     },
-    renderCall: (_args, theme) => renderToolCall("list peers", theme),
+    renderCall: () => renderEmptyCall(),
     renderResult: (result, _options, theme, context) =>
       renderListResult((result.details as ListToolDetails) ?? { peers: [] }, context.isError, theme),
   });
@@ -973,7 +983,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         return toolText(`c2c_pi_poll_inbox failed: ${e instanceof Error ? e.message : String(e)}`, { messages: [] } as InboxToolDetails);
       }
     },
-    renderCall: (_args, theme) => renderToolCall("poll inbox", theme),
+    renderCall: () => renderEmptyCall(),
     renderResult: (result, _options, theme, context) =>
       renderInboxResult((result.details as InboxToolDetails) ?? { messages: [] }, context.isError, theme),
   });
@@ -996,7 +1006,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         details,
       );
     },
-    renderCall: (_args, theme) => renderToolCall("whoami", theme),
+    renderCall: () => renderEmptyCall(),
     renderResult: (result, _options, theme, context) =>
       renderWhoamiResult((result.details as WhoamiToolDetails) ?? { alias: "", sessionId: "", registered: false }, context.isError, theme),
   });
@@ -1016,7 +1026,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         { state: s.state, since: sinceIso, ttlMs: s.ttlMs, registered: true } as StatusToolDetails,
       );
     },
-    renderCall: (_args, theme) => renderToolCall("status", theme),
+    renderCall: () => renderEmptyCall(),
     renderResult: (result, _options, theme, context) =>
       renderStatusResult((result.details as StatusToolDetails) ?? { registered: false }, context.isError, theme),
   });
@@ -1038,7 +1048,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         return toolText(`c2c_pi_join_room failed: ${e instanceof Error ? e.message : String(e)}`, details);
       }
     },
-    renderCall: (args, theme) => renderToolCall(`join room ${(args as { room?: string }).room ?? "unknown"}`, theme),
+    renderCall: () => renderEmptyCall(),
     renderResult: (result, _options, theme, context) =>
       renderJoinRoomResult(
         (result.details as RoomToolDetails) ?? { room: (context.args as { room: string }).room },
@@ -1068,7 +1078,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         return toolText(`c2c_pi_send_room failed: ${e instanceof Error ? e.message : String(e)}`, details);
       }
     },
-    renderCall: (args, theme) => renderSendCall({ kind: "room", room: (args as { room: string }).room }, theme),
+    renderCall: () => renderEmptyCall(),
     renderResult: (result, _options, theme, context) =>
       renderSendResult(
         (result.details as SendToolDetails) ?? { kind: "room", room: (context.args as { room: string }).room },
@@ -1110,7 +1120,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
 
       return toolText(parts.join("\n"), buildLocalInfoDetails());
     },
-    renderCall: (_args, theme) => renderToolCall("local info", theme),
+    renderCall: () => renderEmptyCall(),
     renderResult: (result, _options, theme, context) =>
       renderLocalInfoResult(
         (result.details as LocalInfoToolDetails) ?? buildLocalInfoDetails(),
@@ -1136,7 +1146,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         return toolText(`c2c_pi_rooms failed: ${e instanceof Error ? e.message : String(e)}`, { rooms: [] } as RoomsToolDetails);
       }
     },
-    renderCall: (_args, theme) => renderToolCall("list rooms", theme),
+    renderCall: () => renderEmptyCall(),
     renderResult: (result, _options, theme, context) =>
       renderRoomsResult((result.details as RoomsToolDetails) ?? { rooms: [] }, context.isError, theme),
   });
@@ -1364,32 +1374,16 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("c2c-peers", {
-    description: "List registered c2c peers. Merges per-repo, cross-repo (sessions broker), and public-relay peers (when registered); annotates each with their last-known status.",
-    handler: async (_args, ctx) => {
+    description: "List LIVE c2c peers (subagents nested under their parent). Merges per-repo, cross-repo (sessions broker), and public-relay peers; annotates each with their last-known status. Pass `all` (or `dead`) to include dead/unreachable peers.",
+    handler: async (args, ctx) => {
       const r = ready();
       if (!r) return ctx.ui.notify(notReadyText, "warning");
+      const includeDead = /\b(all|dead)\b/i.test(args.trim());
       try {
-        // Per-repo broker list (always)
-        const localPeers = await r.cli.list();
-        const remotePeers = sessionsBrokerRoot
-          ? await r.cli.list({ brokerRoot: sessionsBrokerRoot }).catch(() => [])
-          : [];
-        const relayPeers = relayRegistered
-          ? await r.cli.relayList().catch(() => [])
-          : [];
-        const merged = mergePeerLists(localPeers, remotePeers, relayPeers);
-        if (merged.length === 0) return ctx.ui.notify("No peers registered.", "info");
-        const lines = merged.map((p) => {
-          const status = peerStatusStore.get(p.alias);
-          const statusSuffix = status ? `  [${status.state}]` : "";
-          const tagSuffix = p.tag === "cross"
-            ? "  [cross-repo]"
-            : p.tag === "relay"
-              ? "  [relay]"
-              : "";
-          return `${p.alive ? "●" : "○"} ${p.alias}${tagSuffix}${statusSuffix}`;
-        });
-        await ctx.ui.select(lines.join("\n"), ["Close"]);
+        const merged = await fetchMergedPeers(r);
+        const { details, text } = buildPeerListResult(merged, includeDead);
+        if (details.peers.length === 0) return ctx.ui.notify(text, "info");
+        await ctx.ui.select(text, ["Close"]);
       } catch (e) {
         ctx.ui.notify(`c2c list failed: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
