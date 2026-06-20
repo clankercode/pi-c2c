@@ -131,6 +131,14 @@ export class RelayWatcher {
       this.reconnectTimer = null;
     }
     if (this.child) {
+      // Release our read ends of the child's pipes before killing it. If the
+      // child has spawned its own children that inherited the stdout/stderr
+      // fds, those grandchildren can keep the write end (and thus our read
+      // end) open after the child dies — which keeps the Node event loop
+      // alive indefinitely. Destroying the streams drops our handles so the
+      // process can exit promptly on stop().
+      this.child.stdout?.destroy();
+      this.child.stderr?.destroy();
       this.child.kill("SIGTERM");
       this.child = null;
     }

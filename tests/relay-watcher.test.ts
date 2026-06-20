@@ -43,10 +43,13 @@ async function waitFor(pred: () => boolean, timeoutMs = 2000): Promise<boolean> 
 function createMockBinary(dir: string, lines: string[]): string {
   const scriptPath = path.join(dir, "mock-c2c");
   // Create a bash script that echoes each line with a delay
+  // `exec sleep` so the long-lived process IS the one we spawned — SIGTERM on
+  // stop() kills it directly instead of orphaning a grandchild that keeps the
+  // stdout pipe (and the Node event loop) open.
   const script = `#!/bin/bash
 ${lines.map((l) => `echo '${l}'`).join("\nsleep 0.05\n")}
 # Keep running until killed
-sleep 3600
+exec sleep 3600
 `;
   fs.writeFileSync(scriptPath, script);
   fs.chmodSync(scriptPath, 0o755);
