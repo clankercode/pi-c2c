@@ -67,6 +67,45 @@ Common environment variables:
 - `C2C_PI_ALIAS`: preferred alias for this pi session
 - `C2C_PI_POLL_INTERVAL_MS`: inbox polling interval, defaults to `5000`
 
+## Footer support
+
+pi-c2c publishes a `c2c` status (a colored `●` + your alias) via
+`ctx.ui.setStatus`. It renders correctly across pi's footers:
+
+- **Default pi footer** — preserves ANSI; the colored dot shows as-is.
+- **pi-bar / tm-bar** — these strip ANSI from extension statuses and prepend a
+  `c2c:` key. pi-c2c installs a runtime `Theme.prototype.fg` patch on
+  `session_start` that re-colorizes the indicator (green = registered,
+  yellow = not). No configuration needed.
+- **pi-powerline-footer** — does *not* strip embedded ANSI, so the `c2c`
+  status already shows with color + glyph in powerline's aggregate
+  `extension_statuses` segment with no configuration.
+
+### Promoting `c2c` to a dedicated powerline segment (optional)
+
+To give c2c its own powerline segment (instead of the aggregate
+`extension_statuses` group), add a `powerline.customItems` entry to
+`~/.pi/agent/settings.json` (or project-local `.pi/settings.json`) and run
+`/reload`:
+
+```json
+{
+  "powerline": {
+    "customItems": [
+      { "id": "c2c", "statusKey": "c2c", "position": "right", "prefix": "c2c" }
+    ]
+  }
+}
+```
+
+Note: pi-c2c's `c2c` status already carries its own ANSI color (the
+green/yellow dot), so the dot stays correctly colored in a dedicated segment.
+Adding a `color` to the custom item is **not** recommended — powerline applies
+that color over the whole value, but the embedded color codes win per-run, so
+it would not recolor the alias and only risks leaving a dangling color. Omit
+`color` to keep pi-c2c's built-in green/yellow coloring. The aggregate
+`extension_statuses` segment shows the same coloring with no config at all.
+
 ## Development
 
 ```bash

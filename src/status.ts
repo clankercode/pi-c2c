@@ -4,13 +4,29 @@
  * Pure helper that turns the c2c registration state into a short, colored
  * string for `ctx.ui.setStatus()`.
  *
- * The default pi footer preserves ANSI colors, so we emit a small colored dot
- * (`theme.fg`). Custom footers such as pi-bar strip ANSI from extension status
- * values before rendering, so we also monkeypatch the shared theme singleton
- * in `index.ts` to colorize the c2c status when it sees the "c2c:" prefix.
+ * Three footers, three rendering contracts:
+ *
+ *  - **Default pi footer** preserves ANSI colors, so `formatStatus()` emits a
+ *    small colored dot (`theme.fg`).
+ *
+ *  - **pi-bar / tm-bar** strip ANSI from extension status values and prepend a
+ *    `c2c:` key, so we monkeypatch the shared theme singleton in `index.ts`
+ *    (`installStatusColorPatch`) to re-colorize the c2c status when it sees the
+ *    "c2c:" prefix.
+ *
+ *  - **pi-powerline-footer** does NOT strip embedded ANSI and does NOT prepend
+ *    a `key:` prefix — it renders the raw `setStatus` value (stripping only
+ *    trailing whitespace/separators). So `formatStatus()` already renders in
+ *    color + glyph in powerline's aggregate `extension_statuses` segment — and
+ *    in an optional dedicated `powerline.customItems` segment keyed on the
+ *    `c2c` status — with no patch needed, and the `c2c:`-keyed fg patch never
+ *    fires on it. See README "Footer support".
  */
 
 import { Theme, type ThemeColor } from "@earendil-works/pi-coding-agent";
+
+/** Liveness glyph used in the c2c status indicator. */
+const INDICATOR = "●";
 
 /**
  * Build the colored status text shown in pi's default status bar.
@@ -19,6 +35,10 @@ import { Theme, type ThemeColor } from "@earendil-works/pi-coding-agent";
  * yellow dot. The alias is shown in the default text color. When unregistered,
  * a short reason (if known) is appended in dim text so the user can see WHY
  * the bar is yellow without opening the tools panel.
+ *
+ * This output also renders correctly in pi-powerline-footer's aggregate
+ * `extension_statuses` segment: powerline preserves the embedded ANSI rather
+ * than stripping it (unlike pi-bar), so the color + glyph survive verbatim.
  */
 export function formatStatus(
   alias: string,
@@ -27,8 +47,8 @@ export function formatStatus(
   reason?: string,
 ): string {
   const indicator = registered
-    ? theme.fg("success", "●")
-    : theme.fg("warning", "●");
+    ? theme.fg("success", INDICATOR)
+    : theme.fg("warning", INDICATOR);
   const aliasPart = theme.fg("text", ` ${alias}`);
   const reasonPart = !registered && reason
     ? theme.fg("muted", ` (${reason})`)
