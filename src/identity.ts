@@ -21,6 +21,13 @@ const SESSION_PREFIX = "pi-";
 const ALIAS_PREFIX = "pi-";
 const ALIAS_HASH_LEN = 6;
 const SUBAGENT_SUFFIX_LEN = 1 + 1 + ALIAS_HASH_LEN; // -a<hash6>
+/**
+ * Max parent-alias length preserved in a subagent alias. `deriveSubagentAlias`
+ * truncates the parent to this many chars before appending `-a<hash6>` (so the
+ * whole alias fits in 64). Consumers that recover the parent from a subagent
+ * alias (e.g. the peer-tree builder) can only match parents up to this length.
+ */
+export const SUBAGENT_PARENT_BASE_MAX = Math.max(1, 64 - SUBAGENT_SUFFIX_LEN); // 56
 
 /** Strip an alias to broker-safe characters. Empty if nothing survives. */
 export function sanitizeAlias(raw: string): string {
@@ -63,7 +70,7 @@ export function deriveSubagentAlias(opts: {
   const hash = createHash("sha256").update(seed).digest("hex").slice(0, ALIAS_HASH_LEN);
   const fallbackParent = resolveAlias({ sessionId: opts.sessionId });
   const parent = sanitizeAlias(opts.parentAlias) || fallbackParent;
-  const base = parent.slice(0, Math.max(1, 64 - SUBAGENT_SUFFIX_LEN));
+  const base = parent.slice(0, SUBAGENT_PARENT_BASE_MAX);
   return `${base}-a${hash}`;
 }
 

@@ -24,6 +24,14 @@ test("renderC2cPiHelp: generic topic maps pi tools to generic c2c MCP and CLI na
   assert.match(out, /c2c rooms send ROOM MSG/);
 });
 
+test("renderC2cPiHelp: peers topic documents live-only default, include_dead, and the subagent tree", () => {
+  const out = renderC2cPiHelp("peers");
+  assert.match(out, /live/i);
+  assert.match(out, /include_dead/);
+  assert.match(out, /dead hidden/i);
+  assert.match(out, /nest/i);
+});
+
 test("renderC2cPiHelp: every public topic renders useful text", () => {
   for (const topic of HELP_TOPICS) {
     const out = renderC2cPiHelp(topic);

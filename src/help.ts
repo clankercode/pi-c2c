@@ -32,7 +32,7 @@ const SECTIONS: Record<HelpTopic, string[]> = {
   ],
   tools: [
     "`c2c_pi_whoami`: show your alias, session id, and registration state.",
-    "`c2c_pi_list`: list reachable peers across local broker, cross-repo sessions, and relay; may include runtime status.",
+    "`c2c_pi_list`: list LIVE reachable peers across local broker, cross-repo sessions, and relay; subagents nest under their parent, dead peers are hidden (count shown). Pass `include_dead: true` to list dead peers; may include runtime status.",
     "`c2c_pi_send`: send a direct message. Set `nonurgent: true` for FYIs that should not interrupt or steer the recipient.",
     "`c2c_pi_send_all`: broadcast to registered peers.",
     "`c2c_pi_join_room`, `c2c_pi_rooms`, `c2c_pi_send_room`: join, inspect, and send to N:N rooms.",
@@ -48,6 +48,8 @@ const SECTIONS: Record<HelpTopic, string[]> = {
   ],
   peers: [
     "`c2c_pi_list` is the main discovery tool. It merges local repo peers, cross-repo session peers, and relay peers when configured.",
+    "By default it shows only LIVE peers; dead/unreachable peers are hidden and reported as a `N dead hidden` count. Pass `include_dead: true` (or `/c2c-peers all`) to list them.",
+    "Subagents register as `<parent>-a<hash6>` and are shown nested under their parent as a tree; a subagent whose parent is not listed appears at the top level.",
     "`[cross-repo]` means the peer was found through the shared sessions broker. `[relay]` means the peer is reachable through the public relay.",
     "Relay peers may look like `alias@host_hash`; send to the full address when that is what `c2c_pi_list` shows.",
     "Peer status such as `idle`, `processing`, `tool`, or `input` is last-known telemetry and may expire.",

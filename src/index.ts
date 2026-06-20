@@ -56,6 +56,7 @@ import {
   setParentAlias,
 } from "./subagent.ts";
 import {
+  buildPeerListDetails,
   formatPeerListText,
   renderEmptyCall,
   renderInboxResult,
@@ -67,7 +68,6 @@ import {
   renderStatusResult,
   renderWhoamiResult,
   type InboxToolDetails,
-  type ListPeerInfo,
   type ListToolDetails,
   type LocalInfoToolDetails,
   type RoomToolDetails,
@@ -765,15 +765,11 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     merged: ReturnType<typeof mergePeerLists>,
     includeDead: boolean,
   ): { details: ListToolDetails; text: string } {
-    const shown = includeDead ? merged : merged.filter((p) => p.alive);
-    const hiddenDead = includeDead ? 0 : merged.length - shown.length;
-    const peers: ListPeerInfo[] = shown.map((p) => ({
-      alias: p.alias,
-      alive: p.alive,
-      tag: p.tag,
-      state: peerStatusStore.get(p.alias)?.state,
-    }));
-    const details: ListToolDetails = { peers, hiddenDead };
+    const details = buildPeerListDetails(
+      merged,
+      includeDead,
+      (alias) => peerStatusStore.get(alias)?.state,
+    );
     return { details, text: formatPeerListText(details) };
   }
 

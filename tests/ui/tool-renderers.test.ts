@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
+  buildPeerListDetails,
   buildPeerTree,
   flattenPeerTree,
   formatPeerListText,
@@ -184,6 +185,62 @@ describe("buildPeerTree", () => {
       { alias: "beta", alive: true },
     ]);
     assert.deepStrictEqual(roots.map((r) => r.alias), ["beta", "zeta", "alpha"]);
+  });
+
+  it("does NOT drop a peer when two share the same display alias", () => {
+    // Two distinct sessions both configured with the same C2C_PI_ALIAS survive
+    // mergePeerLists as two entries; both must still render (no silent loss).
+    const roots = buildPeerTree([
+      { alias: "lyra", alive: true, tag: "local" },
+      { alias: "lyra", alive: true, tag: "cross" },
+    ]);
+    assert.strictEqual(roots.length, 2, "both same-alias peers must be kept");
+    assert.deepStrictEqual(roots.map((r) => r.tag).sort(), ["cross", "local"]);
+  });
+
+  it("nests a child under a parent whose alias exceeds the 56-char truncation boundary", () => {
+    const parent = "p".repeat(57); // > SUBAGENT_PARENT_BASE_MAX (56)
+    const child = `${"p".repeat(56)}-a111111`; // alias the generator would emit
+    const roots = buildPeerTree([
+      { alias: parent, alive: true },
+      { alias: child, alive: true },
+    ]);
+    assert.strictEqual(roots.length, 1, "child should nest, not become a root");
+    assert.strictEqual(roots[0].alias, parent);
+    assert.deepStrictEqual(roots[0].children.map((c) => c.alias), [child]);
+  });
+
+  it("keeps both same-alias peers in the flattened row count", () => {
+    const rows = flattenPeerTree(buildPeerTree([
+      { alias: "dup", alive: true, tag: "local" },
+      { alias: "dup", alive: true, tag: "relay" },
+    ]));
+    assert.strictEqual(rows.length, 2);
+  });
+});
+
+describe("buildPeerListDetails", () => {
+  const merged = [
+    { alias: "alive-1", alive: true, tag: "local" as const },
+    { alias: "dead-1", alive: false, tag: "cross" as const },
+    { alias: "dead-2", alive: false, tag: "relay" as const },
+  ];
+
+  it("hides dead peers by default and counts them in hiddenDead", () => {
+    const details = buildPeerListDetails(merged, false, () => undefined);
+    assert.deepStrictEqual(details.peers.map((p) => p.alias), ["alive-1"]);
+    assert.strictEqual(details.hiddenDead, 2);
+  });
+
+  it("includes dead peers and zeroes hiddenDead when includeDead", () => {
+    const details = buildPeerListDetails(merged, true, () => undefined);
+    assert.strictEqual(details.peers.length, 3);
+    assert.strictEqual(details.hiddenDead, 0);
+  });
+
+  it("enriches shown peers with last-known state via stateFor", () => {
+    const details = buildPeerListDetails(merged, false, (a) => (a === "alive-1" ? "tool" : undefined));
+    assert.strictEqual(details.peers[0].state, "tool");
   });
 });
 

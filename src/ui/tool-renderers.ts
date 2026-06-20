@@ -17,6 +17,7 @@
 import { Container, Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { SUBAGENT_PARENT_BASE_MAX } from "../identity.ts";
 
 const INDENT_C2C = " ";
 const INDENT_CHILD = "   ";
@@ -226,16 +227,22 @@ export interface PeerTreeRow {
   prefix: string;
 }
 
+/** Split a peer alias into its base name and optional relay `@<host>` suffix. */
+function splitAliasHost(alias: string): { base: string; host: string } {
+  const at = alias.indexOf("@");
+  return at >= 0 ? { base: alias.slice(0, at), host: alias.slice(at) } : { base: alias, host: "" };
+}
+
 /**
  * Parse a c2c subagent alias of the form `<parent>-a<hash6>` (optionally with a
  * relay `@<host>` suffix shared with the parent) and return the parent alias.
  * Returns null when the alias is not a subagent alias. See
- * `deriveSubagentAlias` in src/identity.ts for the alias shape.
+ * `deriveSubagentAlias` in src/identity.ts for the alias shape. Note the
+ * returned parent is truncated to `SUBAGENT_PARENT_BASE_MAX` chars when the
+ * real parent alias was longer (the alias only stores that prefix).
  */
 export function parseChildAlias(alias: string): { parentAlias: string } | null {
-  const at = alias.indexOf("@");
-  const base = at >= 0 ? alias.slice(0, at) : alias;
-  const host = at >= 0 ? alias.slice(at) : "";
+  const { base, host } = splitAliasHost(alias);
   const m = base.match(/^(.+)-a[0-9a-f]{6}$/);
   if (!m) return null;
   return { parentAlias: m[1] + host };
@@ -251,15 +258,43 @@ function comparePeers(a: ListPeerInfo, b: ListPeerInfo): number {
  * Build a forest of peers, nesting each subagent under its parent. A peer is
  * only nested when its derived parent alias is itself present in the list;
  * otherwise it is a root (so a live child whose parent is dead/absent still
- * shows, and a coincidental `*-a<6hex>` alias with no real parent is harmless).
+ * shows).
+ *
+ * Every input peer becomes exactly one node — duplicate display aliases (e.g.
+ * two sessions sharing a configured C2C_PI_ALIAS) are NOT folded, so no
+ * reachable peer is silently dropped. Parent matching uses a first-wins alias
+ * lookup that tolerates such collisions.
+ *
+ * The nesting is derived purely from the alias shape (per design), so it is
+ * best-effort, not authoritative: a coincidental non-subagent alias of the
+ * form `<x>-a<6hex>` WILL nest under a peer named `<x>` if one is present
+ * (harmless when absent). It also cannot match a parent whose alias exceeds 56
+ * chars, because `deriveSubagentAlias` truncates the parent there before
+ * hashing — such a child degrades gracefully to a root.
  */
 export function buildPeerTree(peers: ListPeerInfo[]): PeerNode[] {
-  const nodes = new Map<string, PeerNode>();
-  for (const p of peers) nodes.set(p.alias, { ...p, children: [] });
+  const all: PeerNode[] = peers.map((p) => ({ ...p, children: [] }));
+  // Exact alias lookup, plus a truncated-base lookup keyed by
+  // `<host>\0<base truncated to SUBAGENT_PARENT_BASE_MAX>`. The latter lets a
+  // child whose parent alias exceeded the truncation boundary still match the
+  // present parent. Both are first-wins so duplicate aliases never overwrite.
+  const byAlias = new Map<string, PeerNode>();
+  const byTruncBase = new Map<string, PeerNode>();
+  const truncKey = (alias: string): string => {
+    const { base, host } = splitAliasHost(alias);
+    return `${host} ${base.slice(0, SUBAGENT_PARENT_BASE_MAX)}`;
+  };
+  for (const node of all) {
+    if (!byAlias.has(node.alias)) byAlias.set(node.alias, node);
+    const k = truncKey(node.alias);
+    if (!byTruncBase.has(k)) byTruncBase.set(k, node);
+  }
+  const resolveParent = (parentAlias: string): PeerNode | undefined =>
+    byAlias.get(parentAlias) ?? byTruncBase.get(truncKey(parentAlias));
   const roots: PeerNode[] = [];
-  for (const node of nodes.values()) {
+  for (const node of all) {
     const child = parseChildAlias(node.alias);
-    const parent = child ? nodes.get(child.parentAlias) : undefined;
+    const parent = child ? resolveParent(child.parentAlias) : undefined;
     if (parent && parent !== node) parent.children.push(node);
     else roots.push(node);
   }
@@ -289,6 +324,35 @@ export function flattenPeerTree(roots: PeerNode[]): PeerTreeRow[] {
     walk(root.children, TREE_INDENT);
   }
   return rows;
+}
+
+/** Minimal merged-peer shape consumed by `buildPeerListDetails`. */
+export interface MergedPeerLike {
+  alias: string;
+  alive: boolean;
+  tag?: "local" | "cross" | "relay";
+}
+
+/**
+ * Build `ListToolDetails` from merged peers. Live peers only unless
+ * `includeDead`; the dead peers filtered out are counted into `hiddenDead`.
+ * Each shown peer is enriched with its last-known runtime state via `stateFor`
+ * (injected so this stays pure and unit-testable, independent of the store).
+ */
+export function buildPeerListDetails(
+  merged: MergedPeerLike[],
+  includeDead: boolean,
+  stateFor: (alias: string) => string | undefined,
+): ListToolDetails {
+  const shown = includeDead ? merged : merged.filter((p) => p.alive);
+  const hiddenDead = includeDead ? 0 : merged.length - shown.length;
+  const peers: ListPeerInfo[] = shown.map((p) => ({
+    alias: p.alias,
+    alive: p.alive,
+    tag: p.tag,
+    state: stateFor(p.alias),
+  }));
+  return { peers, hiddenDead };
 }
 
 /** Pick a theme color for a peer's last-known status. */

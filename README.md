@@ -34,7 +34,7 @@ back. The parent transcript also receives a quiet local notice when a child
 registers, for example:
 
 ```text
-Subagent Plan#abc123 registered as `pi-abcd-a0123`.
+Subagent Plan#abc123 registered as `pi-abcd-a012345`.
 ```
 
 That notice is process-local UI context, not a real c2c direct message.
