@@ -85,18 +85,22 @@ export class C2cError extends Error {
  * Mirrors `C2c_repo_fp.resolve_sessions_broker_root` in
  * `ocaml/c2c_repo_fp.ml` exactly so the extension and the CLI agree.
  *
+ * Intentionally NOT keyed on `XDG_STATE_HOME`: the rendezvous must be a single
+ * fixed location shared by every c2c-using process, but `XDG_STATE_HOME`
+ * varies per process (e.g. Claude Code sets its own), which silently split the
+ * rendezvous. We pin it to `$HOME/.c2c/sessions/broker` (override with
+ * `C2C_SESSIONS_BROKER_ROOT`). See the c2c repo finding
+ * `.collab/findings/2026-06-20-sessions-broker-root-xdg-resolution.md`.
+ *
  *   1. $C2C_SESSIONS_BROKER_ROOT (explicit override)
- *   2. $XDG_STATE_HOME/sessions/broker
- *   3. $HOME/.c2c/sessions/broker
+ *   2. $HOME/.c2c/sessions/broker
  */
 export function resolveSessionsBrokerRoot(
   env: NodeJS.ProcessEnv = process.env,
   homedir: string = process.env.HOME ?? "",
-  xdgStateHome: string = process.env.XDG_STATE_HOME ?? "",
 ): string {
   const explicit = (env.C2C_SESSIONS_BROKER_ROOT ?? "").trim();
   if (explicit) return explicit;
-  if (xdgStateHome.trim()) return `${xdgStateHome.trim()}/sessions/broker`;
   if (homedir) return `${homedir}/.c2c/sessions/broker`;
   return ".c2c/sessions/broker";
 }

@@ -20,7 +20,6 @@ test("resolveSessionsBrokerRoot: explicit C2C_SESSIONS_BROKER_ROOT wins", () => 
   const root = resolveSessionsBrokerRoot(
     { C2C_SESSIONS_BROKER_ROOT: "/custom/path" },
     "/home/x",
-    "/state",
   );
   assert.equal(root, "/custom/path");
 });
@@ -29,23 +28,25 @@ test("resolveSessionsBrokerRoot: trims whitespace from explicit override", () =>
   const root = resolveSessionsBrokerRoot(
     { C2C_SESSIONS_BROKER_ROOT: "  /custom/path  " },
     "/home/x",
-    "/state",
   );
   assert.equal(root, "/custom/path");
 });
 
-test("resolveSessionsBrokerRoot: falls back to XDG_STATE_HOME/sessions/broker", () => {
-  const root = resolveSessionsBrokerRoot({}, "/home/x", "/state");
-  assert.equal(root, "/state/sessions/broker");
+test("resolveSessionsBrokerRoot: IGNORES XDG_STATE_HOME (rendezvous is fixed at HOME/.c2c)", () => {
+  // The rendezvous must not move with a process's XDG_STATE_HOME, so it is
+  // pinned to HOME/.c2c even when XDG_STATE_HOME is set. See c2c finding
+  // 2026-06-20-sessions-broker-root-xdg-resolution.md.
+  const root = resolveSessionsBrokerRoot({ XDG_STATE_HOME: "/state" }, "/home/x");
+  assert.equal(root, "/home/x/.c2c/sessions/broker");
 });
 
 test("resolveSessionsBrokerRoot: falls back to HOME/.c2c/sessions/broker", () => {
-  const root = resolveSessionsBrokerRoot({}, "/home/x", "");
+  const root = resolveSessionsBrokerRoot({}, "/home/x");
   assert.equal(root, "/home/x/.c2c/sessions/broker");
 });
 
 test("resolveSessionsBrokerRoot: empty env returns a sane default", () => {
-  const root = resolveSessionsBrokerRoot({}, "", "");
+  const root = resolveSessionsBrokerRoot({}, "");
   assert.ok(root.length > 0, "should return some non-empty path");
 });
 
@@ -53,9 +54,8 @@ test("resolveSessionsBrokerRoot: empty C2C_SESSIONS_BROKER_ROOT treated as unset
   const root = resolveSessionsBrokerRoot(
     { C2C_SESSIONS_BROKER_ROOT: "   " },
     "/home/x",
-    "/state",
   );
-  assert.equal(root, "/state/sessions/broker");
+  assert.equal(root, "/home/x/.c2c/sessions/broker");
 });
 
 /** A fake exec that records the env it was called with. */
