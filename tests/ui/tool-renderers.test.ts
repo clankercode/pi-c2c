@@ -192,6 +192,20 @@ describe("renderSendResult", () => {
     assert.ok(!lines[0].includes("this tail should truncate"));
   });
 
+  it("collapses multiline failed send detail before truncating", () => {
+    const detail = "short first line\nsecond line should not start a new physical row before the compact row reaches the available width";
+    const lines = renderSendResult(
+      { kind: "dm", target: "pi-d7ef52", error: "failed", errorDetail: detail },
+      false,
+      plainTheme,
+    ).render(100);
+
+    assert.equal(lines.length, 1);
+    assert.ok(!lines[0].includes("\n"), "failed send compact row must remain one physical line");
+    assert.ok(lines[0].includes("failed · short first line second line"));
+    assert.ok(lines[0].includes("…"), "long multiline failure detail should truncate");
+  });
+
   it("colors failed send detail and truncation ellipsis as error", () => {
     const theme = makeRecordingTheme();
     renderSendResult(

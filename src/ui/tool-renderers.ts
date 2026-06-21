@@ -163,8 +163,9 @@ class ErrorLineComponent implements Component {
   ) {}
 
   render(width: number): string[] {
-    const line = this.detail
-      ? c2cActionLead(this.action, this.theme) + this.theme.fg("error", this.message) + this.theme.fg("borderMuted", " · ") + this.theme.fg("error", this.detail)
+    const detail = this.detail ? onelineBody(this.detail) : undefined;
+    const line = detail
+      ? c2cActionLead(this.action, this.theme) + this.theme.fg("error", this.message) + this.theme.fg("borderMuted", " · ") + this.theme.fg("error", detail)
       : c2cActionLead(this.action, this.theme) + this.theme.fg("error", this.message);
     return [truncateToWidth(line, width, this.theme.fg("error", "…"))];
   }
