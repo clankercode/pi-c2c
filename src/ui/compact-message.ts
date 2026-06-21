@@ -308,12 +308,12 @@ export function buildExpandedComponent(
   const headerPrefix = theme.fg("accent", "⧓ c2c") + theme.fg("borderMuted", " · ") + prefix + arrowSpacer;
   const header = count <= 1
     ? primary?.event === "status"
-      ? `${headerPrefix}status from ${primarySender}`
-      : `${headerPrefix}message from ${primarySender}`
-    : `${headerPrefix}${count} messages`;
+      ? headerPrefix + theme.fg("muted", "status from ") + theme.fg("accent", primarySender)
+      : headerPrefix + theme.fg("accent", primarySender)
+    : headerPrefix + theme.fg("accent", `${count} messages`);
 
   const container = new Container();
-  container.addChild(new Text(theme.fg("accent", header), 1, 0));
+  container.addChild(new Text(header, 1, 0));
   container.addChild(new Spacer(1));
 
   for (const envelope of envelopes) {

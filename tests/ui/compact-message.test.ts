@@ -268,9 +268,22 @@ describe("buildExpandedComponent", () => {
     const msg = makeMessage(envelope("lyra-quill", "hello\nworld"));
     const lines = buildExpandedComponent(msg, plainTheme).render(80);
     const joined = lines.join("\n");
-    assert.ok(joined.includes("message from lyra-quill"));
+    assert.ok(joined.includes("lyra-quill"));
+    assert.ok(!joined.includes("message from lyra-quill"));
     assert.ok(joined.includes("hello"));
     assert.ok(joined.includes("world"));
+  });
+
+  it("renders the expanded incoming sender alias in accent without a message-from label", () => {
+    const msg = makeMessage(envelope("lyra-quill", "hello world"), { count: 1, senders: ["lyra-quill"] });
+    const theme = makeRecordingTheme();
+    const lines = buildExpandedComponent(msg, theme, "me").render(80);
+    const joined = lines.join("\n");
+
+    assert.ok(!joined.includes("message from"));
+    const senderEvents = theme.events.filter((e) => e.text === "lyra-quill");
+    assert.ok(senderEvents.length > 0, "expected expanded sender alias to be styled separately");
+    assert.equal(senderEvents.at(-1)!.color, "accent");
   });
 
   it("renders status envelopes in expanded view", () => {
