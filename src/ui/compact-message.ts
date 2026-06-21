@@ -276,7 +276,7 @@ export function buildCompactLine(
     bodyParts.push(theme.fg(snippetColor, snippet));
   }
 
-  const ellipsis = useAsciiGlyphs() ? "..." : "…";
+  const ellipsis = theme.fg("toolOutput", useAsciiGlyphs() ? "..." : "…");
   return truncateToWidth(header + bodyParts.join(theme.fg("borderMuted", " · ")), width, ellipsis);
 }
 

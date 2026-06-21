@@ -19,6 +19,30 @@ const plainTheme = {
   strikethrough: (text: string) => text,
 } as unknown as Theme;
 
+interface ColorEvent {
+  color: string;
+  text: string;
+}
+
+function makeRecordingTheme() {
+  const events: ColorEvent[] = [];
+  const theme = {
+    fg: (color: string, text: string) => {
+      events.push({ color, text });
+      return text;
+    },
+    bg: (color: string, text: string) => {
+      events.push({ color, text });
+      return text;
+    },
+    bold: (text: string) => text,
+    italic: (text: string) => text,
+    strikethrough: (text: string) => text,
+    events,
+  } as unknown as Theme & { events: ColorEvent[] };
+  return theme;
+}
+
 function makeMessage(
   content: string,
   details?: Partial<C2cDeliveryDetails>,
@@ -178,6 +202,20 @@ describe("buildCompactLine", () => {
     const line = buildCompactLine(msg, plainTheme, 40);
     assert.ok(line.includes("x"));
     assert.ok(visibleWidth(line) <= 40);
+  });
+
+  it("colors the incoming truncation ellipsis like the message body", () => {
+    const msg = makeMessage(
+      envelope("lyra-quill", "this is a long incoming message body that must overflow a narrow compact line and then be truncated"),
+      { count: 1, senders: ["lyra-quill"] },
+    );
+    const theme = makeRecordingTheme();
+
+    buildCompactLine(msg, theme, 40);
+
+    const ellipsisEvents = theme.events.filter((e) => e.text === "…");
+    assert.ok(ellipsisEvents.length > 0, "expected incoming truncation ellipsis to be styled");
+    assert.equal(ellipsisEvents.at(-1)!.color, "toolOutput");
   });
 
   it("truncates a long incoming body with the single ellipsis char (not ...)", () => {
