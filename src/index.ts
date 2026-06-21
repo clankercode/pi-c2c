@@ -870,11 +870,12 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       return toolText(`c2c_pi_send failed (${result.via}): ${result.message}`, { ...details, error: "failed" });
     },
     renderCall: () => renderEmptyCall(),
-    renderResult: (result, _options, theme, context) =>
+    renderResult: (result, options, theme, context) =>
       renderSendResult(
         (result.details as SendToolDetails) ?? (context.args as unknown as SendToolDetails),
         context.isError,
         theme,
+        options.expanded,
       ),
   });
 
@@ -902,11 +903,12 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       }
     },
     renderCall: () => renderEmptyCall(),
-    renderResult: (result, _options, theme, context) =>
+    renderResult: (result, options, theme, context) =>
       renderSendResult(
         (result.details as SendToolDetails) ?? { kind: "broadcast" },
         context.isError,
         theme,
+        options.expanded,
       ),
   });
 
@@ -1076,11 +1078,12 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       }
     },
     renderCall: () => renderEmptyCall(),
-    renderResult: (result, _options, theme, context) =>
+    renderResult: (result, options, theme, context) =>
       renderSendResult(
         (result.details as SendToolDetails) ?? { kind: "room", room: (context.args as { room: string }).room },
         context.isError,
         theme,
+        options.expanded,
       ),
   });
 

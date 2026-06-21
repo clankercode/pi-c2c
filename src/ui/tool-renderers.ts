@@ -14,7 +14,7 @@
  * content lives in the result renderer. If `renderCall` were simply omitted,
  * pi's call fallback would print the bold raw tool name as a separate row.
  */
-import { Container, Text } from "@earendil-works/pi-tui";
+import { Container, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { SUBAGENT_PARENT_BASE_MAX } from "../identity.ts";
@@ -196,21 +196,90 @@ function sendPrefix(kind: SendToolDetails["kind"], via: SendToolDetails["via"], 
   return `${theme.fg(dirColor, dirGlyph)}${theme.fg("borderMuted", routeGlyph)}`;
 }
 
-/** Collapse whitespace and truncate a body to a one-line preview. */
-function previewBody(body: string | undefined, maxLen = 60): string {
-  if (!body) return "";
-  const oneline = body.replace(/\s+/g, " ").trim();
-  if (oneline.length <= maxLen) return oneline;
-  return `${oneline.slice(0, maxLen - 1)}…`;
+/** Collapse internal whitespace to a single line (no length cap — the renderer
+ *  truncates to the actual terminal width at render time). */
+function onelineBody(body: string): string {
+  return body.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Width-aware, expand-aware send result.
+ *
+ *  - **Collapsed**: a single line `header · preview` that uses ALL the available
+ *    horizontal width before truncating the body preview with `…` (matching the
+ *    incoming compact line). No fixed-length cap, so a wide terminal shows more.
+ *  - **Expanded**: the header line followed by the FULL body (wrapped to width),
+ *    mirroring the incoming message expanded view (`buildExpandedComponent`), so
+ *    an expanded outgoing send is no longer truncated.
+ */
+class SendResultComponent implements Component {
+  private cachedWidth?: number;
+  private cachedLines?: string[];
+
+  constructor(
+    private readonly header: string,
+    private readonly body: string | undefined,
+    private readonly expanded: boolean,
+    private readonly theme: Theme,
+  ) {}
+
+  render(width: number): string[] {
+    if (this.cachedLines && this.cachedWidth === width) {
+      return this.cachedLines;
+    }
+    this.cachedLines = this.build(width);
+    this.cachedWidth = width;
+    return this.cachedLines;
+  }
+
+  private build(width: number): string[] {
+    const oneline = this.body ? onelineBody(this.body) : "";
+
+    if (this.expanded && oneline.length > 0) {
+      // Full body, wrapped to width — Text wraps rather than truncates.
+      const fullBody = this.body!.replace(/^\n+|\n+$/g, "");
+      const container = new Container();
+      // Header carries its own leading space; the body gets paddingX=1 so it
+      // aligns under the header (column 1), mirroring the incoming expanded view.
+      container.addChild(new Text(this.header, 0, 0));
+      container.addChild(new Spacer(1));
+      container.addChild(new Text(this.theme.fg("toolOutput", fullBody), 1, 0));
+      return container.render(width);
+    }
+
+    if (oneline.length === 0) {
+      return [truncateToWidth(this.header, width, "…")];
+    }
+    const line =
+      this.header +
+      this.theme.fg("borderMuted", " · ") +
+      this.theme.fg("toolOutput", oneline);
+    return [truncateToWidth(line, width, "…")];
+  }
+
+  handleInput(_data: string): void {
+    // No interactive input on the send result row.
+  }
+
+  invalidate(): void {
+    this.cachedWidth = undefined;
+    this.cachedLines = undefined;
+  }
 }
 
 /**
  * Result shown when a send tool finishes.
- *    ⧓ c2c.send · ▲◎ → lyra-quill · preview…
+ *    ⧓ c2c.send · ▲◎ → lyra-quill · preview…        (collapsed, fills width)
  *    ⧓ c2c.send-all · ✶◎ · preview…
  *    ⧓ c2c.send-room · ▲◎ → swarm-lounge · preview…
+ * When `expanded`, the full body is shown below the header (not truncated).
  */
-export function renderSendResult(details: SendToolDetails, isError: boolean, theme: Theme): Component {
+export function renderSendResult(
+  details: SendToolDetails,
+  isError: boolean,
+  theme: Theme,
+  expanded = false,
+): Component {
   const action = sendAction(details.kind);
   const err = resultError(isError, details);
   if (err) return c2cActionError(action, theme, err);
@@ -229,12 +298,7 @@ export function renderSendResult(details: SendToolDetails, isError: boolean, the
       parts.push(theme.fg("success", ` → ${details.room ?? "unknown"}`));
       break;
   }
-  const preview = previewBody(details.body);
-  if (preview) {
-    parts.push(theme.fg("borderMuted", " · "));
-    parts.push(theme.fg("toolOutput", preview));
-  }
-  return new Text(parts.join(""), 0, 0);
+  return new SendResultComponent(parts.join(""), details.body, expanded, theme);
 }
 
 // ── c2c_pi_list ─────────────────────────────────────────────────────────────────
@@ -306,7 +370,7 @@ export function buildPeerTree(peers: ListPeerInfo[]): PeerNode[] {
   const byTruncBase = new Map<string, PeerNode>();
   const truncKey = (alias: string): string => {
     const { base, host } = splitAliasHost(alias);
-    return `${host} ${base.slice(0, SUBAGENT_PARENT_BASE_MAX)}`;
+    return `${host} ${base.slice(0, SUBAGENT_PARENT_BASE_MAX)}`;
   };
   for (const node of all) {
     if (!byAlias.has(node.alias)) byAlias.set(node.alias, node);

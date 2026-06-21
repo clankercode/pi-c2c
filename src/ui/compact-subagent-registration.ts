@@ -146,13 +146,14 @@ export function buildCompactLine(
   const details = resolveDetails(message);
   const prefix = buildPrefix(theme);
 
+  const ellipsis = useAsciiGlyphs() ? "..." : "…";
   if (!details) {
     // Non-canonical content; render the raw text in muted color, truncated.
     const body = theme.fg("muted", contentString(message.content));
-    return truncateToWidth(prefix + body, width);
+    return truncateToWidth(prefix + body, width, ellipsis);
   }
 
-  return truncateToWidth(prefix + buildBody(details.agentId, details.alias, theme), width);
+  return truncateToWidth(prefix + buildBody(details.agentId, details.alias, theme), width, ellipsis);
 }
 
 /** Build the expanded multi-line representation. */

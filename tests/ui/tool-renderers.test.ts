@@ -67,17 +67,46 @@ describe("renderSendResult", () => {
     assert.ok(lines[0].includes("◎"));
   });
 
-  it("renders a DM success with truncated body preview", () => {
-    const lines = renderSendResult(
-      { kind: "dm", target: "lyra-quill", via: "sessions", body: "hello world this is a fairly long message that should be truncated" },
+  it("uses available width before truncating the body preview", () => {
+    const body = "hello world this is a fairly long message that should be truncated";
+    // Narrow: the line fills the width then truncates with the single
+    // ellipsis char, dropping the tail.
+    const narrow = renderSendResult(
+      { kind: "dm", target: "lyra-quill", via: "sessions", body },
       false,
       plainTheme,
-    ).render(120);
-    assertActionPrefix(lines[0], "send");
-    assert.ok(lines[0].includes("→ lyra-quill"));
-    assert.ok(lines[0].includes("hello world"));
-    assert.ok(lines[0].includes("…"));
-    assert.ok(!lines[0].includes("should be truncated"));
+    ).render(50);
+    assertActionPrefix(narrow[0], "send");
+    assert.ok(narrow[0].includes("hello world"));
+    assert.ok(narrow[0].includes("…"), "narrow width should truncate with the single ellipsis char");
+    assert.ok(!narrow[0].includes("..."), "should never use three-dot ellipsis");
+    assert.ok(!narrow[0].includes("should be truncated"), "tail should be cut at narrow width");
+    // Wide: the SAME message is not truncated — all available width is used
+    // first (no fixed 60-char cap).
+    const wide = renderSendResult(
+      { kind: "dm", target: "lyra-quill", via: "sessions", body },
+      false,
+      plainTheme,
+    ).render(300);
+    assert.ok(wide[0].includes("should be truncated"), "wide width should show the full body");
+    assert.ok(!wide[0].includes("…"), "wide width should not truncate");
+  });
+
+  it("shows the full body when the result is expanded", () => {
+    const body = "hello world this is a fairly long message that should be truncated";
+    // Width 80 would truncate the collapsed line, but expanded must show
+    // everything (mirroring the incoming expanded view).
+    const lines = renderSendResult(
+      { kind: "dm", target: "lyra-quill", via: "sessions", body },
+      false,
+      plainTheme,
+      true, // expanded
+    ).render(80);
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("⧓ c2c.send"), "expanded keeps the header");
+    assert.ok(joined.includes("should be truncated"), "expanded shows the full body, untruncated");
+    assert.ok(!joined.includes("…"), "expanded does not truncate with an ellipsis");
+    assert.ok(lines.length > 1, "expanded is multi-line (header + body)");
   });
 
   it("renders a DM success with short body preview over relay", () => {

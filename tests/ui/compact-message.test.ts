@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { withEnv } from "../helpers/withEnv.ts";
 import {
   buildCompactLine,
   buildExpandedComponent,
@@ -177,6 +178,30 @@ describe("buildCompactLine", () => {
     const line = buildCompactLine(msg, plainTheme, 40);
     assert.ok(line.includes("x"));
     assert.ok(visibleWidth(line) <= 40);
+  });
+
+  it("truncates a long incoming body with the single ellipsis char (not ...)", () => {
+    const msg = makeMessage(
+      envelope("lyra-quill", "this is a long incoming message body that must overflow a narrow compact line and then be truncated"),
+      { count: 1, senders: ["lyra-quill"] },
+    );
+    const line = buildCompactLine(msg, plainTheme, 40);
+    assert.ok(visibleWidth(line) <= 40);
+    assert.ok(line.includes("…"), "incoming compact truncation should use the single ellipsis char");
+    assert.ok(!line.includes("..."), "incoming compact truncation should not use three dots");
+  });
+
+  it("uses ASCII '...' (not …) when PI_C2C_ASCII=1 and the body overflows", () => {
+    const msg = makeMessage(
+      envelope("lyra-quill", "this is a long incoming message body that must overflow a narrow compact line and then be truncated"),
+      { count: 1, senders: ["lyra-quill"] },
+    );
+    const line = withEnv("PI_C2C_ASCII", "1", () =>
+      buildCompactLine(msg, plainTheme, 40),
+    );
+    assert.ok(visibleWidth(line) <= 40);
+    assert.ok(line.includes("..."), "ASCII mode should truncate with three dots");
+    assert.ok(!line.includes("…"), "ASCII mode should not use the Unicode ellipsis char");
   });
 });
 

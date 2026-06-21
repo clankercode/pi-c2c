@@ -276,7 +276,8 @@ export function buildCompactLine(
     bodyParts.push(theme.fg(snippetColor, snippet));
   }
 
-  return truncateToWidth(header + bodyParts.join(theme.fg("borderMuted", " · ")), width);
+  const ellipsis = useAsciiGlyphs() ? "..." : "…";
+  return truncateToWidth(header + bodyParts.join(theme.fg("borderMuted", " · ")), width, ellipsis);
 }
 
 /** Build the expanded multi-line representation. */
