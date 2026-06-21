@@ -67,6 +67,24 @@ describe("renderSendResult", () => {
     assert.ok(lines[0].includes("◎"));
   });
 
+  it("colors the truncated body ellipsis like the send body", () => {
+    const theme = makeRecordingTheme();
+    renderSendResult(
+      {
+        kind: "dm",
+        target: "lyra-quill",
+        via: "sessions",
+        body: "hello world this is a fairly long message that should be truncated",
+      },
+      false,
+      theme,
+    ).render(50);
+
+    const ellipsisEvents = theme.events.filter((e) => e.text === "…");
+    assert.ok(ellipsisEvents.length > 0, "expected truncated send ellipsis to be styled");
+    assert.equal(ellipsisEvents.at(-1)!.color, "toolOutput");
+  });
+
   it("uses available width before truncating the body preview", () => {
     const body = "hello world this is a fairly long message that should be truncated";
     // Narrow: the line fills the width then truncates with the single
@@ -667,14 +685,14 @@ describe("buildCompactLine: primary sender coloring", () => {
 });
 
 describe("buildCompactLine: snippet brightness by direction", () => {
-  it("incoming snippet renders in text (full brightness)", () => {
+  it("incoming snippet renders in toolOutput gray", () => {
     const { events } = renderOne(
       "<c2c event=\"message\" from=\"lyra-quill\">hello there</c2c>",
       "me", // not the sender, so it's incoming
     );
     const snippetEvents = events.filter((e) => e.text === "hello there");
     assert.ok(snippetEvents.length > 0);
-    assert.equal(snippetEvents[0].color, "text");
+    assert.equal(snippetEvents[0].color, "toolOutput");
   });
 
   it("outgoing snippet renders in dim", () => {

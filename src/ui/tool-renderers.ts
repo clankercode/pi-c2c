@@ -248,13 +248,13 @@ class SendResultComponent implements Component {
     }
 
     if (oneline.length === 0) {
-      return [truncateToWidth(this.header, width, "…")];
+      return [truncateToWidth(this.header, width, this.theme.fg("toolOutput", "…"))];
     }
     const line =
       this.header +
       this.theme.fg("borderMuted", " · ") +
       this.theme.fg("toolOutput", oneline);
-    return [truncateToWidth(line, width, "…")];
+    return [truncateToWidth(line, width, this.theme.fg("toolOutput", "…"))];
   }
 
   handleInput(_data: string): void {

@@ -264,15 +264,15 @@ export function buildCompactLine(
   }
 
   if (snippet.length > 0) {
-    // Snippet brightness tracks direction: incoming = full brightness
-    // (I want to read it), outgoing = dim (I know what I sent),
+    // Snippet brightness tracks direction: incoming = gray tool output
+    // (matching expanded bodies), outgoing = dim (I know what I sent),
     // status = muted (just state info, not the message body).
     const snippetColor =
       primary?.event === "status"
         ? "muted"
         : direction === "outgoing"
           ? "dim"
-          : "text";
+          : "toolOutput";
     bodyParts.push(theme.fg(snippetColor, snippet));
   }
 
