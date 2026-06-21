@@ -867,7 +867,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         const tag = nonurgent ? " (nonurgent)" : "";
         return toolText(`Sent to ${target} (via ${result.via})${tag}.`, details);
       }
-      return toolText(`c2c_pi_send failed (${result.via}): ${result.message}`, { ...details, error: "failed" });
+      return toolText(`c2c_pi_send failed (${result.via}): ${result.message}`, { ...details, error: "failed", errorDetail: result.message });
     },
     renderCall: () => renderEmptyCall(),
     renderResult: (result, options, theme, context) =>
@@ -899,7 +899,8 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         telemetry.recordSent("(broadcast)", "broadcast");
         return toolText("Broadcast sent.", details);
       } catch (e) {
-        return toolText(`c2c_pi_send_all failed: ${e instanceof Error ? e.message : String(e)}`, { ...details, error: "failed" });
+        const message = e instanceof Error ? e.message : String(e);
+        return toolText(`c2c_pi_send_all failed: ${message}`, { ...details, error: "failed", errorDetail: message });
       }
     },
     renderCall: () => renderEmptyCall(),
@@ -1074,7 +1075,8 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         telemetry.recordSent(`room:${room}`, "room");
         return toolText(`Sent to room ${room}.`, details);
       } catch (e) {
-        return toolText(`c2c_pi_send_room failed: ${e instanceof Error ? e.message : String(e)}`, { ...details, error: "failed" });
+        const message = e instanceof Error ? e.message : String(e);
+        return toolText(`c2c_pi_send_room failed: ${message}`, { ...details, error: "failed", errorDetail: message });
       }
     },
     renderCall: () => renderEmptyCall(),

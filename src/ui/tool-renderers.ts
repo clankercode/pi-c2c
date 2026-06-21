@@ -37,6 +37,8 @@ const TREE_INDENT = "  ";
 export interface ToolResultStatus {
   /** Short failure note ("not registered", "failed", …); absent on success. */
   error?: string;
+  /** Optional detailed failure text rendered after the short note. */
+  errorDetail?: string;
 }
 
 export interface SendToolDetails extends ToolResultStatus {
@@ -149,6 +151,31 @@ function c2cActionError(action: string, theme: Theme, message = "error"): Compon
 function resultError(isError: boolean, details: ToolResultStatus | undefined): string | undefined {
   if (isError) return "error";
   return details?.error;
+}
+
+/** Width-aware failure row with optional detail: `<lead><status> · <detail>`. */
+class ErrorLineComponent implements Component {
+  constructor(
+    private readonly action: string,
+    private readonly message: string,
+    private readonly detail: string | undefined,
+    private readonly theme: Theme,
+  ) {}
+
+  render(width: number): string[] {
+    const line = this.detail
+      ? c2cActionLead(this.action, this.theme) + this.theme.fg("error", this.message) + this.theme.fg("borderMuted", " · ") + this.theme.fg("error", this.detail)
+      : c2cActionLead(this.action, this.theme) + this.theme.fg("error", this.message);
+    return [truncateToWidth(line, width, this.theme.fg("error", "…"))];
+  }
+
+  handleInput(_data: string): void {
+    // No interactive input on error rows.
+  }
+
+  invalidate(): void {
+    // Stateless.
+  }
 }
 
 /**
@@ -282,7 +309,7 @@ export function renderSendResult(
 ): Component {
   const action = sendAction(details.kind);
   const err = resultError(isError, details);
-  if (err) return c2cActionError(action, theme, err);
+  if (err) return new ErrorLineComponent(action, err, details.errorDetail, theme);
 
   const parts: string[] = [c2cActionLead(action, theme)];
   parts.push(sendPrefix(details.kind, details.via, theme));

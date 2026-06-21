@@ -177,6 +177,36 @@ describe("renderSendResult", () => {
     assertActionPrefix(lines[0], "send");
     assert.ok(lines[0].includes("error"));
   });
+
+  it("renders failed send status with truncated detail", () => {
+    const detail = "c2c send failed (exit 1): recipient is not alive: pi-d7ef52 and this tail should truncate";
+    const lines = renderSendResult(
+      { kind: "dm", target: "pi-d7ef52", error: "failed", errorDetail: detail },
+      false,
+      plainTheme,
+    ).render(70);
+
+    assertActionPrefix(lines[0], "send");
+    assert.ok(lines[0].includes("failed · c2c send failed"));
+    assert.ok(lines[0].includes("…"), "long failure detail should truncate");
+    assert.ok(!lines[0].includes("this tail should truncate"));
+  });
+
+  it("colors failed send detail and truncation ellipsis as error", () => {
+    const theme = makeRecordingTheme();
+    renderSendResult(
+      { kind: "dm", target: "pi-d7ef52", error: "failed", errorDetail: "recipient is not alive: pi-d7ef52" },
+      false,
+      theme,
+    ).render(45);
+
+    const detailEvent = theme.events.find((e) => e.text === "recipient is not alive: pi-d7ef52");
+    assert.ok(detailEvent, "expected failure detail to be styled");
+    assert.equal(detailEvent!.color, "error");
+    const ellipsisEvents = theme.events.filter((e) => e.text === "…");
+    assert.ok(ellipsisEvents.length > 0, "expected failure truncation ellipsis to be styled");
+    assert.equal(ellipsisEvents.at(-1)!.color, "error");
+  });
 });
 
 describe("failure rendering via details.error (no thrown isError)", () => {
