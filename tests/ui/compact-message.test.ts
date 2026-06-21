@@ -140,19 +140,19 @@ describe("buildCompactLine", () => {
     assert.ok(line.includes("◎"));
   });
 
-  it("prefixes incoming messages with ⧓ c2c · and a left arrow", () => {
+  it("prefixes incoming messages with ⧓ c2c.recv · and a left arrow", () => {
     const msg = makeMessage(envelope("lyra-quill", "hello there"));
     const line = buildCompactLine(msg, plainTheme, 80);
-    assert.match(line, /⧓ c2c · ▼◎ ← lyra-quill/);
+    assert.match(line, /⧓ c2c\.recv · ▼◎ ← lyra-quill/);
   });
 
-  it("prefixes outgoing messages with ⧓ c2c · and a right arrow", () => {
+  it("prefixes outgoing messages with ⧓ c2c.send · and a right arrow", () => {
     const msg = makeMessage(envelope("pi-313d8c", "on it"), {
       senders: ["pi-313d8c"],
       selfAlias: "pi-313d8c",
     });
     const line = buildCompactLine(msg, plainTheme, 80);
-    assert.match(line, /⧓ c2c · ▲◎ → pi-313d8c/);
+    assert.match(line, /⧓ c2c\.send · ▲◎ → pi-313d8c/);
   });
 
   it("shows outgoing direction when sender matches selfAlias", () => {
@@ -293,7 +293,7 @@ describe("buildExpandedComponent", () => {
     });
     const lines = buildExpandedComponent(msg, plainTheme).render(80);
     const joined = lines.join("\n");
-    assert.ok(joined.includes("status from lyra-quill"));
+    assert.ok(joined.includes("⧓ c2c.status · ●◎ status from lyra-quill"));
     assert.ok(joined.includes("state=processing"));
   });
 
@@ -315,7 +315,7 @@ describe("buildExpandedComponent", () => {
     const msg = makeMessage(content, { count: 1, senders: ["pi-c1ab3c"] });
     const lines = buildExpandedComponent(msg, plainTheme).render(80);
     const joined = lines.join("\n");
-    assert.ok(joined.includes("status from pi-c1ab3c"));
+    assert.ok(joined.includes("⧓ c2c.status · ●◎ status from pi-c1ab3c"));
     assert.ok(joined.includes("state=processing"));
   });
 });

@@ -2,7 +2,7 @@
  * Compact TUI message renderer for pi-c2c delivered messages.
  *
  * Collapses one or more inbound c2c envelopes into a single line:
- *   ⧓ c2c · lyra-quill: build finished
+ *   ⧓ c2c.recv · ▼◎ ← lyra-quill · build finished
  * Expands to show each message as `from_alias: body` so the full payload is
  * available on demand.
  *
@@ -85,6 +85,20 @@ function arrowGlyph(direction: "incoming" | "outgoing" | "broadcast" | "status")
       return ascii ? ASCII_GLYPHS.arrowRight : GLYPHS.arrowRight;
     default:
       return "";
+  }
+}
+
+/** `c2c.<action>` token for delivered message lines. */
+function messageAction(direction: "incoming" | "outgoing" | "broadcast" | "status"): string {
+  switch (direction) {
+    case "incoming":
+      return "recv";
+    case "outgoing":
+      return "send";
+    case "broadcast":
+      return "recv-all";
+    case "status":
+      return "status";
   }
 }
 
@@ -251,7 +265,8 @@ export function buildCompactLine(
   const prefix = buildPrefix(direction, route, theme);
   const arrow = arrowGlyph(direction);
   const arrowSpacer = arrow ? theme.fg("success", ` ${arrow} `) : " ";
-  const header = " " + theme.fg("accent", "⧓ c2c") + theme.fg("borderMuted", " · ") + prefix + arrowSpacer;
+  const action = messageAction(direction);
+  const header = " " + theme.fg("accent", `⧓ c2c.${action}`) + theme.fg("borderMuted", " · ") + prefix + arrowSpacer;
 
   const bodyParts: string[] = [];
   if (count <= 1) {
@@ -305,7 +320,8 @@ export function buildExpandedComponent(
   const prefix = buildPrefix(direction, route, theme);
   const arrow = arrowGlyph(direction);
   const arrowSpacer = arrow ? theme.fg("success", ` ${arrow} `) : " ";
-  const headerPrefix = theme.fg("accent", "⧓ c2c") + theme.fg("borderMuted", " · ") + prefix + arrowSpacer;
+  const action = messageAction(direction);
+  const headerPrefix = theme.fg("accent", `⧓ c2c.${action}`) + theme.fg("borderMuted", " · ") + prefix + arrowSpacer;
   const header = count <= 1
     ? primary?.event === "status"
       ? headerPrefix + theme.fg("muted", "status from ") + theme.fg("accent", primarySender)
