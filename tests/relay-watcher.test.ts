@@ -137,6 +137,25 @@ test("RelayWatcher: isRunning reflects state after start", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test("RelayWatcher: running subscribe process is reported connected while waiting for frames", () => {
+  const dir = tmpDir();
+  const bin = createMockBinary(dir, []);
+  const w = new RelayWatcher({
+    alias: "test@123",
+    relayUrl: "https://relay.example.com",
+    bin,
+    onChange: () => {},
+  });
+  w.start();
+  try {
+    assert.equal(w.isRunning, true);
+    assert.equal(w.state, "connected");
+  } finally {
+    w.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("RelayWatcher: fires onChange when JSON line is received", async () => {
   const dir = tmpDir();
   const jsonLine = JSON.stringify({ op: "dm", from: "sender@abc", body: "hello", ts: 123 });

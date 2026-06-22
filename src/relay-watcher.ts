@@ -175,6 +175,9 @@ export class RelayWatcher {
       return;
     }
 
+    this.setState("connected");
+    this.backoffMs = 1000;
+
     this.child.stdout?.setEncoding("utf8");
     this.child.stderr?.setEncoding("utf8");
 
