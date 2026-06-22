@@ -77,6 +77,8 @@ export function renderLiveDebug(
 
   lines.push(theme.fg("accent", "  c2c live debug"));
   lines.push(theme.fg("borderMuted", "  ") + "─".repeat(34));
+  lines.push(theme.fg("dim", "  press q or Esc to close"));
+  lines.push("");
 
   lines.push(line(theme, "alias", alias, "accent"));
   lines.push(line(theme, "session", sessionId, "muted"));
@@ -261,14 +263,17 @@ export class LiveDebugComponent implements Component {
     private readonly telemetry: LiveTelemetry,
     private readonly theme: Theme,
     private readonly opts: LiveDebugComponentOptions,
+    private readonly onClose?: () => void,
   ) {}
 
   render(_width: number): string[] {
     return renderLiveDebug(this.telemetry.snapshot(), this.theme, this.opts);
   }
 
-  handleInput(_data: string): void {
-    // No keyboard interaction for the dashboard.
+  handleInput(data: string): void {
+    if (data === "q" || data === "Q" || data === "\x1b" || data === "\x03") {
+      this.onClose?.();
+    }
   }
 
   invalidate(): void {
@@ -281,6 +286,7 @@ export function createLiveDebugComponent(
   telemetry: LiveTelemetry,
   theme: Theme,
   opts: LiveDebugComponentOptions,
+  onClose?: () => void,
 ): Component {
-  return new LiveDebugComponent(telemetry, theme, opts);
+  return new LiveDebugComponent(telemetry, theme, opts, onClose);
 }

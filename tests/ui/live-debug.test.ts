@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { renderLiveDebug } from "../../src/ui/live-debug.ts";
+import { createLiveDebugComponent, renderLiveDebug } from "../../src/ui/live-debug.ts";
 import { createLiveTelemetry } from "../../src/telemetry.ts";
 
 const plainTheme = {
@@ -24,6 +24,7 @@ test("renderLiveDebug: shows identity and connection state", () => {
   const lines = renderLiveDebug(tel.snapshot(1000), plainTheme, opts);
   const text = lines.join("\n");
   assert.ok(text.includes("c2c live debug"));
+  assert.ok(text.includes("press q or Esc to close"));
   assert.ok(text.includes("pi-test"));
   assert.ok(text.includes("pi-sess"));
   assert.ok(text.includes("registered"));
@@ -97,4 +98,32 @@ test("renderLiveDebug: handles empty telemetry gracefully", () => {
   assert.ok(text.includes("(none)"), text);
   assert.ok(text.includes("last received"), text);
   assert.ok(text.includes("last sent"), text);
+});
+
+test("LiveDebugComponent: closes on q, Q, Escape, and Ctrl-C", () => {
+  const closeKeys = ["q", "Q", "\x1b", "\x03"];
+
+  for (const key of closeKeys) {
+    const tel = createLiveTelemetry(() => 0);
+    let closed = 0;
+    const component = createLiveDebugComponent(tel, plainTheme, opts, () => {
+      closed += 1;
+    });
+
+    component.handleInput?.(key);
+    assert.equal(closed, 1, `expected ${JSON.stringify(key)} to close`);
+  }
+});
+
+test("LiveDebugComponent: ignores non-close keys", () => {
+  const tel = createLiveTelemetry(() => 0);
+  let closed = 0;
+  const component = createLiveDebugComponent(tel, plainTheme, opts, () => {
+    closed += 1;
+  });
+
+  component.handleInput?.("x");
+  component.handleInput?.("\r");
+
+  assert.equal(closed, 0);
 });

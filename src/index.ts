@@ -1487,16 +1487,27 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.registerCommand("c2c-live-debug", {
     description: "Open a live telemetry dashboard for c2c message traffic and broker health",
     handler: async (_args, ctx) => {
-      const component = createLiveDebugComponent(telemetry, ctx.ui.theme, {
-        identity,
-        registered,
-        relayRegistered,
-        relayAddress,
-        crossRepoEnabled,
-        crossRepoSessionsRegistered,
-        pollIntervalMs,
-      });
-      ctx.ui.custom(() => component);
+      if (ctx.mode !== "tui") {
+        ctx.ui.notify("/c2c-live-debug requires interactive TUI mode", "error");
+        return;
+      }
+
+      await ctx.ui.custom<void>((_tui, theme, _keybindings, done) =>
+        createLiveDebugComponent(
+          telemetry,
+          theme,
+          {
+            identity,
+            registered,
+            relayRegistered,
+            relayAddress,
+            crossRepoEnabled,
+            crossRepoSessionsRegistered,
+            pollIntervalMs,
+          },
+          () => done(),
+        ),
+      );
     },
   });
 }
