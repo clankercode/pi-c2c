@@ -69,6 +69,47 @@ exit ${exitCode}
   return scriptPath;
 }
 
+function createArgCaptureBinary(dir: string, outputPath: string): string {
+  const scriptPath = path.join(dir, "mock-c2c-args");
+  const script = `#!/bin/bash
+printf '%s\n' "$@" > ${JSON.stringify(outputPath)}
+exec sleep 3600
+`;
+  fs.writeFileSync(scriptPath, script);
+  fs.chmodSync(scriptPath, 0o755);
+  return scriptPath;
+}
+
+test("RelayWatcher: converts https relay URL to http for subscribe", async () => {
+  const dir = tmpDir();
+  const argsPath = path.join(dir, "args.txt");
+  const bin = createArgCaptureBinary(dir, argsPath);
+  const w = new RelayWatcher({
+    alias: "test@123",
+    relayUrl: "https://relay.example.com",
+    bin,
+    onChange: () => {},
+  });
+
+  w.start();
+  try {
+    const ok = await waitFor(() => fs.existsSync(argsPath), 2000);
+    assert.ok(ok, "mock binary did not capture args");
+    const args = fs.readFileSync(argsPath, "utf8").trim().split("\n");
+    assert.deepEqual(args, [
+      "relay",
+      "subscribe",
+      "--alias",
+      "test@123",
+      "--relay-url",
+      "http://relay.example.com",
+    ]);
+  } finally {
+    w.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("RelayWatcher: constructor sets initial state correctly", () => {
   const w = new RelayWatcher({
     alias: "test@123",

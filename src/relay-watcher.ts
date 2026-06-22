@@ -32,6 +32,10 @@ export type OnChange = () => void;
 
 export type RelayWatcherState = "connected" | "reconnecting" | "stopped";
 
+function subscribeRelayUrl(relayUrl: string): string {
+  return relayUrl.replace(/^https:\/\//i, "http://");
+}
+
 export interface RelayWatcherOptions {
   /** The relay alias/address (e.g. "pi-abc@3d08761ae3f3"). */
   alias: string;
@@ -154,7 +158,7 @@ export class RelayWatcher {
       "--alias",
       this.opts.alias,
       "--relay-url",
-      this.opts.relayUrl,
+      subscribeRelayUrl(this.opts.relayUrl),
     ];
 
     try {
