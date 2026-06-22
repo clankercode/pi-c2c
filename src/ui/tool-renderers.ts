@@ -110,6 +110,8 @@ export interface StatusToolDetails extends ToolResultStatus {
 }
 
 export interface LocalInfoToolDetails extends ToolResultStatus {
+  piC2cVersion?: string;
+  c2cVersion?: string;
   alias: string;
   sessionId: string;
   broker: string;
@@ -739,6 +741,12 @@ export function renderLocalInfoResult(
       0,
     ),
   );
+  if (details.piC2cVersion) {
+    container.addChild(new Text(INDENT_CHILD + theme.fg("text", "pi-c2c ") + theme.fg("muted", details.piC2cVersion), 0, 0));
+  }
+  if (details.c2cVersion) {
+    container.addChild(new Text(INDENT_CHILD + theme.fg("text", "c2c ") + theme.fg("muted", details.c2cVersion), 0, 0));
+  }
   container.addChild(new Text(INDENT_CHILD + theme.fg("text", "broker ") + theme.fg("muted", details.broker), 0, 0));
   container.addChild(new Text(INDENT_CHILD + theme.fg("text", "cross-repo ") + theme.fg("muted", details.crossRepo), 0, 0));
   container.addChild(new Text(INDENT_CHILD + theme.fg("text", "relay ") + theme.fg("muted", details.relay), 0, 0));

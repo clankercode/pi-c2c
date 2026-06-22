@@ -630,6 +630,8 @@ describe("renderStatusResult", () => {
 describe("renderLocalInfoResult", () => {
   it("renders compact local info summary", () => {
     const details: LocalInfoToolDetails = {
+      piC2cVersion: "0.4.3",
+      c2cVersion: "0.8.6",
       alias: "pi-abc",
       sessionId: "sess_1",
       broker: "connected",
@@ -639,6 +641,8 @@ describe("renderLocalInfoResult", () => {
     };
     const lines = renderLocalInfoResult(details, false, plainTheme).render(120);
     assert.strictEqual(text(lines[0]), " ⧓ c2c.local · pi-abc (sess_1)");
+    assert.ok(lines.join("\n").includes("pi-c2c 0.4.3"));
+    assert.ok(lines.join("\n").includes("c2c 0.8.6"));
     assert.ok(lines.join("\n").includes("address pi-abc@a3b2c1d4e5f6"));
   });
 });

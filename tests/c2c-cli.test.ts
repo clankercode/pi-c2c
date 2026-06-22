@@ -211,6 +211,15 @@ test("run: non-zero exit throws C2cError with stderr", async () => {
   });
 });
 
+test("c2cVersion: invokes --version and returns semantic version token", async () => {
+  const { exec, calls } = fakeExec({ stdout: "0.8.6 9efd7940 2026-06-22T07:07:43Z\n" });
+  const cli = new C2cCli({ exec, sessionId: "sid-9" });
+  const version = await cli.c2cVersion();
+  assert.equal(version, "0.8.6");
+  assert.deepEqual(calls[0].args, ["--version"]);
+  assert.equal(calls[0].env.C2C_MCP_SESSION_ID, undefined);
+});
+
 test("whoami: never passes --session-id (CLI rejects it; identity from env)", async () => {
   const { exec, calls } = fakeExec({ stdout: '{"session_id":"sid-9","alias":"pi-test"}' });
   const cli = new C2cCli({ exec, sessionId: "sid-9" });

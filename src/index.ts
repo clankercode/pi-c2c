@@ -18,6 +18,7 @@
  * c2c-side changes are required.
  */
 
+import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Type } from "typebox";
@@ -77,7 +78,8 @@ import {
   type WhoamiToolDetails,
 } from "./ui/tool-renderers.ts";
 
-export const PI_C2C_VERSION = "0.1.0";
+const requirePackageJson = createRequire(import.meta.url);
+export const PI_C2C_VERSION = (requirePackageJson("../package.json") as { version?: string }).version ?? "unknown";
 
 const STATUS_KEY = "c2c";
 // Default to 5s. The pollTick drains 3 sources (per-repo, sessions, relay)
@@ -1132,12 +1134,18 @@ export default function c2cExtension(pi: ExtensionAPI): void {
         );
       }
 
-      return toolText(parts.join("\n"), buildLocalInfoDetails());
+      return toolText(parts.join("\n"), await buildLocalInfoDetails());
     },
     renderCall: () => renderEmptyCall(),
     renderResult: (result, _options, theme, context) =>
       renderLocalInfoResult(
-        (result.details as LocalInfoToolDetails) ?? buildLocalInfoDetails(),
+        (result.details as LocalInfoToolDetails) ?? {
+          alias: "(unknown)",
+          sessionId: "(unknown)",
+          broker: "unknown",
+          crossRepo: "unknown",
+          relay: "unknown",
+        },
         context.isError,
         theme,
       ),
@@ -1175,6 +1183,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     const alias = identity?.alias ?? "(not registered)";
     const sessionId = identity?.sessionId ?? "(none)";
     const hostHash = relayEnabled ? computeHostHash() : undefined;
+    const c2cVersion = cli ? await cli.c2cVersion().catch(() => "unknown") : "unknown";
     const addr = relayRegistered ? relayAddress ?? "---" : "---";
     const xrepo = crossRepoEnabled
       ? crossRepoSessionsRegistered
@@ -1194,6 +1203,8 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     const lines = [
       "c2c local info",
       "─".repeat(36),
+      `  pi-c2c      ${PI_C2C_VERSION}`,
+      `  c2c         ${c2cVersion}`,
       `  alias       ${alias}`,
       `  session     ${sessionId}`,
       `  host_hash   ${hostHash ?? "(n/a)"}`,
@@ -1231,8 +1242,9 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     return lines.join("\n");
   }
 
-  function buildLocalInfoDetails(): LocalInfoToolDetails {
+  async function buildLocalInfoDetails(): Promise<LocalInfoToolDetails> {
     const alias = identity?.alias ?? "(not registered)";
+    const c2cVersion = cli ? await cli.c2cVersion().catch(() => "unknown") : "unknown";
     const sessionId = identity?.sessionId ?? "(none)";
     const xrepo = crossRepoEnabled
       ? crossRepoSessionsRegistered
@@ -1250,6 +1262,8 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           : "not connected";
 
     return {
+      piC2cVersion: PI_C2C_VERSION,
+      c2cVersion,
       alias,
       sessionId,
       broker: registered ? "connected" : registerError ?? "not connected",

@@ -506,6 +506,11 @@ export class C2cCli {
     return this.sessionId ? [...args, "--session-id", this.sessionId] : args;
   }
 
+  async c2cVersion(): Promise<string> {
+    const res = await this.run(["--version"], { sessionId: null });
+    return res.stdout.trim().split(/\s+/)[0] || "unknown";
+  }
+
   async whoami(opts?: { brokerRoot?: string }): Promise<C2cWhoami | null> {
     // `whoami` resolves identity from the C2C_MCP_SESSION_ID env var; it does
     // NOT accept --session-id (the CLI rejects it with exit 124).
