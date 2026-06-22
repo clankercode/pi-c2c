@@ -117,6 +117,9 @@ export interface LocalInfoToolDetails extends ToolResultStatus {
   broker: string;
   crossRepo: string;
   relay: string;
+  relayWsState?: string;
+  relayHost?: string;
+  relayHostVerified?: boolean;
   address?: string;
 }
 
@@ -750,6 +753,13 @@ export function renderLocalInfoResult(
   container.addChild(new Text(INDENT_CHILD + theme.fg("text", "broker ") + theme.fg("muted", details.broker), 0, 0));
   container.addChild(new Text(INDENT_CHILD + theme.fg("text", "cross-repo ") + theme.fg("muted", details.crossRepo), 0, 0));
   container.addChild(new Text(INDENT_CHILD + theme.fg("text", "relay ") + theme.fg("muted", details.relay), 0, 0));
+  if (details.relayWsState) {
+    container.addChild(new Text(INDENT_CHILD + theme.fg("text", "relay_ws ") + theme.fg("muted", details.relayWsState), 0, 0));
+  }
+  if (details.relayHost) {
+    const suffix = details.relayHostVerified === false ? " (unverified)" : "";
+    container.addChild(new Text(INDENT_CHILD + theme.fg("text", "relay_host ") + theme.fg("muted", `${details.relayHost}${suffix}`), 0, 0));
+  }
   if (details.address) {
     container.addChild(new Text(INDENT_CHILD + theme.fg("text", "address ") + theme.fg("accent", details.address), 0, 0));
   }

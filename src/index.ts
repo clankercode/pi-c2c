@@ -1117,6 +1117,8 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           broker: "not connected",
           crossRepo: "unknown",
           relay: "unknown",
+          relayWsState: "---",
+          relayHost: "---",
           error: "not registered",
         } as LocalInfoToolDetails);
       }
@@ -1269,6 +1271,9 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       broker: registered ? "connected" : registerError ?? "not connected",
       crossRepo: xrepo,
       relay,
+      relayWsState: relayWsState ?? "---",
+      relayHost: relayHostId ?? "---",
+      relayHostVerified: relayHostId ? relayHostIdVerified : undefined,
       address: relayRegistered ? relayAddress : undefined,
     };
   }
