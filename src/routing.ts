@@ -8,6 +8,7 @@
  */
 
 import type { C2cCli, C2cMessage, C2cPeer, RelayPeer } from "./c2c-cli.ts";
+import { parseRelayAlias } from "./relay.ts";
 
 /** A single send hop. */
 export interface SendHop {
@@ -60,8 +61,13 @@ export async function executeSend(
   relayAddress: string | undefined,
   fromAlias?: string,
 ): Promise<SendResult | SendError> {
+  const relayAddressTarget = parseRelayAlias(target) !== null;
+  const effectiveHops = relayAddressTarget
+    ? hops.filter((hop) => hop.kind === "relay")
+    : hops;
+
   let lastErr: unknown = null;
-  for (const hop of hops) {
+  for (const hop of effectiveHops) {
     try {
       if (hop.kind === "relay") {
         if (!relayAddress) {
@@ -84,7 +90,7 @@ export async function executeSend(
   }
   return {
     ok: false,
-    via: hops[hops.length - 1]?.kind ?? "per-repo",
+    via: effectiveHops[effectiveHops.length - 1]?.kind ?? "per-repo",
     message: lastErr instanceof Error ? lastErr.message : String(lastErr),
   };
 }

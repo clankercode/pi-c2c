@@ -52,6 +52,33 @@ test("executeSend: succeeds on first hop", async () => {
   assert.equal(result.via, "sessions");
 });
 
+test("executeSend: full relay-address target uses relay directly", async () => {
+  const calls: string[] = [];
+  const cli = fakeCli({
+    send: async () => {
+      calls.push("broker");
+      throw new Error("should not use broker for relay address");
+    },
+    relayDmSend: async (target, body, alias) => {
+      calls.push("relay");
+      assert.equal(target, "pi-f74d00@3d08761ae3f3");
+      assert.equal(body, "body");
+      assert.equal(alias, "pi-daf05a@3d08761ae3f3");
+    },
+  });
+  const hops = buildSendHops({ sessionsBrokerRoot: "/sessions", relayRegistered: true });
+  const result = await executeSend(
+    cli,
+    hops,
+    "pi-f74d00@3d08761ae3f3",
+    "body",
+    "pi-daf05a@3d08761ae3f3",
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.via, "relay");
+  assert.deepEqual(calls, ["relay"]);
+});
+
 test("executeSend: falls through on not-found errors", async () => {
   let calls = 0;
   const cli = fakeCli({
