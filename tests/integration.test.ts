@@ -19,8 +19,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { C2cCli, type ExecFn, type ExecResultLike } from "../src/c2c-cli.ts";
+import { resolveC2cCommand } from "../src/c2c-bin.ts";
 
-const C2C_BIN = process.env.C2C_BIN ?? "c2c";
+const C2C_BIN = resolveC2cCommand();
 
 function c2cAvailable(): boolean {
   try {
@@ -32,7 +33,7 @@ function c2cAvailable(): boolean {
 }
 
 const HAVE_C2C = c2cAvailable();
-const opts = HAVE_C2C ? {} : { skip: "c2c binary not on PATH" };
+const opts = HAVE_C2C ? {} : { skip: "c2c binary not available" };
 
 let broker: string;
 before(() => {
@@ -83,7 +84,7 @@ test("list --json parses (alias + boolean alive) for the real shape", opts, asyn
   const peers = await c.list();
   const me = peers.find((p) => p.alias === "pi-it-alpha");
   assert.ok(me, "self should appear in list");
-  assert.equal(typeof me!.alive, "boolean");
+  assert.equal(me!.alive, true, "resolved c2c binary should register a live pi process, not a short-lived wrapper PID");
 });
 
 test("send via env (no --from) is accepted; -- guards a leading-dash body; poll-inbox shape parses", opts, async () => {

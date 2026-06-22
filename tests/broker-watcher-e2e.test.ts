@@ -21,9 +21,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { C2cCli, type ExecFn, type ExecResultLike } from "../src/c2c-cli.ts";
+import { resolveC2cCommand } from "../src/c2c-bin.ts";
 import { BrokerWatcher } from "../src/broker-watcher.ts";
 
-const C2C_BIN = process.env.C2C_BIN ?? "c2c";
+const C2C_BIN = resolveC2cCommand();
 const E2E_ENABLED = process.env.C2C_PI_E2E === "1";
 
 function c2cAvailable(): boolean {
@@ -41,7 +42,7 @@ const opts = E2E_ENABLED && haveC2c
   : {
       skip: !E2E_ENABLED
         ? "set C2C_PI_E2E=1 to run e2e broker-watcher tests"
-        : "c2c binary not on PATH",
+        : "c2c binary not available",
     };
 
 let counter = 0;

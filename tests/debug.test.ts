@@ -145,6 +145,21 @@ test("collectDebugProblems: unregistered with identity produces one error", () =
   assert.ok(problems[0].remedy.includes("c2c doctor"));
 });
 
+test("collectDebugProblems: GLIBC mismatch gives C2C_BIN/local build guidance", () => {
+  const problems = collectDebugProblems({
+    ...BASE_STATE,
+    registered: false,
+    registerError:
+      "@clanker-code/c2c-linux-x64/bin/c2c: /lib/x86_64-linux-gnu/libc.so.6: version GLIBC_2.38 not found",
+  });
+  assert.equal(problems.length, 1);
+  assert.equal(problems[0].severity, "error");
+  assert.equal(problems[0].field, "c2cBinaryGlibc");
+  assert.ok(problems[0].message.includes("GLIBC_2.38"));
+  assert.ok(problems[0].remedy.includes("C2C_BIN=/path/to/c2c"));
+  assert.ok(problems[0].remedy.includes("build/install c2c locally"));
+});
+
 test("collectDebugProblems: null identity is an error", () => {
   const problems = collectDebugProblems({ ...BASE_STATE, identity: null });
   assert.ok(problems.some((p) => p.severity === "error" && p.field === "identity"));

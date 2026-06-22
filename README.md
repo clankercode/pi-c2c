@@ -41,9 +41,13 @@ That notice is process-local UI context, not a real c2c direct message.
 
 ## Requirements
 
-- `c2c` on `PATH`
 - pi `0.79` or newer
 - Node.js and pnpm for local development
+
+pi-c2c depends on the `@clanker-code/c2c` npm package and will use its
+platform binary by default. If you maintain a local/source c2c build, or if the
+npm binary is not compatible with your Linux distribution, launch pi with
+`C2C_BIN=/path/to/c2c` to override the bundled binary.
 
 ## Install
 

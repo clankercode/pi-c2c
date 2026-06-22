@@ -2,3 +2,9 @@ allowBuilds:
   '@google/genai': true
   esbuild: true
   protobufjs: true
+minimumReleaseAgeExclude:
+  - '@clanker-code/c2c-darwin-arm64@0.8.6'
+  - '@clanker-code/c2c-darwin-x64@0.8.6'
+  - '@clanker-code/c2c-linux-arm64@0.8.6'
+  - '@clanker-code/c2c-linux-x64@0.8.6'
+  - '@clanker-code/c2c@0.8.6'

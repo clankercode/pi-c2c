@@ -270,6 +270,18 @@ test("bin override is honored", async () => {
   assert.equal(calls[0].command, "/custom/c2c");
 });
 
+test("bundled npm c2c is used when no explicit bin or PATH c2c exists", async () => {
+  const { exec, calls } = fakeExec({ stdout: "[]" });
+  await new C2cCli({
+    exec,
+    env: { PATH: "" },
+    pathExists: () => false,
+    npmBinaryResolver: () => "/pkg/c2c",
+  }).list();
+
+  assert.equal(calls[0].command, "/pkg/c2c");
+});
+
 // --- relay methods ---------------------------------------------------------
 
 test("relayRegister: builds register args, optional relay-url and token, parses opaque_host_id", async () => {

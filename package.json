@@ -47,5 +47,8 @@
   "homepage": "https://github.com/clankercode/pi-c2c",
   "bugs": {
     "url": "https://github.com/clankercode/pi-c2c/issues"
+  },
+  "dependencies": {
+    "@clanker-code/c2c": "^0.8.6"
   }
 }

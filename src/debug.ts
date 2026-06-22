@@ -68,13 +68,18 @@ export function collectDebugProblems(state: DebugStateInput): DebugProblem[] {
   }
 
   if (state.identity && !state.registered) {
+    const glibcMismatch = /GLIBC_[0-9.]+\s+not found/.test(state.registerError ?? "");
     problems.push({
       severity: "error",
-      field: "registered",
-      message: `c2c broker registration failed for alias "${state.identity.alias}"${
-        state.registerError ? ` (${state.registerError})` : ""
-      }`,
-      remedy: "run `c2c doctor` from this repo to diagnose; tools are still available but DMs won't deliver",
+      field: glibcMismatch ? "c2cBinaryGlibc" : "registered",
+      message: glibcMismatch
+        ? `c2c npm binary is incompatible with this Linux system (${state.registerError})`
+        : `c2c broker registration failed for alias "${state.identity.alias}"${
+            state.registerError ? ` (${state.registerError})` : ""
+          }`,
+      remedy: glibcMismatch
+        ? "build/install c2c locally for this machine and launch pi with `C2C_BIN=/path/to/c2c`, or use a newer compatible c2c npm binary"
+        : "run `c2c doctor` from this repo to diagnose; tools are still available but DMs won't deliver",
     });
   }
 

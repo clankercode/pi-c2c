@@ -18,6 +18,8 @@
  *   poll-inbox --json → [ { from_alias, to_alias, content, ts }, ... ]
  */
 
+import { resolveC2cCommand, type C2cNpmResolver } from "./c2c-bin.ts";
+
 /** Minimal shape of a command execution result (a superset of pi's ExecResult). */
 export interface ExecResultLike {
   stdout: string;
@@ -421,8 +423,14 @@ export function parseRelayFingerprint(stdout: string): string {
 
 export interface C2cCliOptions {
   exec: ExecFn;
-  /** Path to the c2c binary (default: $C2C_BIN or "c2c"). */
+  /** Path to the c2c binary (default: $C2C_BIN, PATH c2c, bundled npm c2c, or "c2c"). */
   bin?: string;
+  /** Environment override for command resolution; tests only. */
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  /** Test hook for PATH executable checks. */
+  pathExists?: (file: string) => boolean;
+  /** Test hook / override for @clanker-code/c2c resolution. */
+  npmBinaryResolver?: C2cNpmResolver | null;
   /** Session id to scope inbox/identity commands to. */
   sessionId?: string;
   /** Per-invocation timeout in ms (default 15000). */
@@ -448,7 +456,12 @@ export class C2cCli {
 
   constructor(opts: C2cCliOptions) {
     this.exec = opts.exec;
-    this.bin = opts.bin ?? process.env.C2C_BIN ?? "c2c";
+    this.bin = resolveC2cCommand({
+      explicitBin: opts.bin,
+      env: opts.env,
+      pathExists: opts.pathExists,
+      npmResolver: opts.npmBinaryResolver,
+    });
     this.sessionId = opts.sessionId;
     this.brokerRoot = opts.brokerRoot;
     this.timeoutMs = opts.timeoutMs ?? 15000;

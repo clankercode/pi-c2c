@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@clanker-code/c2c':
+        specifier: ^0.8.6
+        version: 0.8.6
     devDependencies:
       '@earendil-works/pi-ai':
         specifier: 0.79.4
@@ -145,6 +149,34 @@ packages:
   '@babel/runtime@7.29.7':
     resolution: {integrity: sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw==}
     engines: {node: '>=6.9.0'}
+
+  '@clanker-code/c2c-darwin-arm64@0.8.6':
+    resolution: {integrity: sha512-ECYM93k8T+acKhsIiYeKXv2dZjTiTR5nZ+y/GpPvdbTqh6autPirk+gEPqsbHUsD+sZKn6PkFd4cOufBcRe6EQ==}
+    cpu: [arm64]
+    os: [darwin]
+    hasBin: true
+
+  '@clanker-code/c2c-darwin-x64@0.8.6':
+    resolution: {integrity: sha512-FQsFJGadeiP7xg1ow1l5Oalqw83kj0Pt9NTHA4K5OlGlTyJZCbY7weZ85UMG6Ay1HLXuqJpgzuV8Nlr6/7Wpwg==}
+    cpu: [x64]
+    os: [darwin]
+    hasBin: true
+
+  '@clanker-code/c2c-linux-arm64@0.8.6':
+    resolution: {integrity: sha512-f3t4sk3JhvtnVzlaN+2odGCOR720XaEC8YmuOE9W2vsNZv6gMQTrjubUOwHzjtjWJYLrxY3hfBNx+eHvzk6Itg==}
+    cpu: [arm64]
+    os: [linux]
+    hasBin: true
+
+  '@clanker-code/c2c-linux-x64@0.8.6':
+    resolution: {integrity: sha512-9NnvJr1LTx8Qz2EJhtKvvEZn3oAc7W6RcZAP8rqYB6SC4QpCxzE3Smdr9E5EMm49oAr5bXYtuPnt21UG83kh8A==}
+    cpu: [x64]
+    os: [linux]
+    hasBin: true
+
+  '@clanker-code/c2c@0.8.6':
+    resolution: {integrity: sha512-GA+sD+DHYTJRc8/juJ4VxNUsFV+YtYZzFmMvLoQZIN8mbmKokhpiGTwmNEnTkiAsb/HBGL4txkaopwxS2U/mig==}
+    hasBin: true
 
   '@earendil-works/pi-agent-core@0.79.4':
     resolution: {integrity: sha512-xkaZ3yK2XbP9HYdHrrdj/6HqZPM0o/mwbjMSU4RTJyR3HjDG0ZrPz76Hg6s0W+G4u6PpJr1mGx/srCG+3eQA8A==}
@@ -1024,6 +1056,25 @@ snapshots:
   '@aws/lambda-invoke-store@0.2.4': {}
 
   '@babel/runtime@7.29.7': {}
+
+  '@clanker-code/c2c-darwin-arm64@0.8.6':
+    optional: true
+
+  '@clanker-code/c2c-darwin-x64@0.8.6':
+    optional: true
+
+  '@clanker-code/c2c-linux-arm64@0.8.6':
+    optional: true
+
+  '@clanker-code/c2c-linux-x64@0.8.6':
+    optional: true
+
+  '@clanker-code/c2c@0.8.6':
+    optionalDependencies:
+      '@clanker-code/c2c-darwin-arm64': 0.8.6
+      '@clanker-code/c2c-darwin-x64': 0.8.6
+      '@clanker-code/c2c-linux-arm64': 0.8.6
+      '@clanker-code/c2c-linux-x64': 0.8.6
 
   '@earendil-works/pi-agent-core@0.79.4(ws@8.21.0)(zod@4.4.3)':
     dependencies:

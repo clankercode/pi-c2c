@@ -26,9 +26,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as http from "node:http";
 import { C2cCli, type ExecFn, type ExecResultLike, type C2cMessage, type RelayMessage, type RelayPeer } from "../src/c2c-cli.ts";
+import { resolveC2cCommand } from "../src/c2c-bin.ts";
 import { drainAllSources, mergePeerLists } from "../src/routing.ts";
 
-const C2C_BIN = process.env.C2C_BIN ?? "c2c";
+const C2C_BIN = resolveC2cCommand();
 
 function c2cAvailable(): boolean {
   try {
@@ -40,7 +41,7 @@ function c2cAvailable(): boolean {
 }
 
 const HAVE_C2C = c2cAvailable();
-const opts = HAVE_C2C ? {} : { skip: "c2c binary not on PATH" };
+const opts = HAVE_C2C ? {} : { skip: "c2c binary not available" };
 
 /** A typed fakeCli with optional overrides per-method. */
 function fakeCli(overrides?: {
