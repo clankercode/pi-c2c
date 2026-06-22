@@ -167,8 +167,9 @@ export function formatEnvelope(
   const finalKind: "dm" | "room" = kind ?? detected;
   const roomId = finalKind === "room" ? extractRoomId(msg) : undefined;
   const replyVia = finalKind === "room" ? "c2c_pi_send_room" : "c2c_pi_send";
+  const source = msg.source ?? "broker";
   return (
-    `<c2c event="message" from="${escapeAttr(from)}" to="${escapeAttr(to)}" source="broker"` +
+    `<c2c event="message" from="${escapeAttr(from)}" to="${escapeAttr(to)}" source="${escapeAttr(source)}"` +
     `${nonurgentAttr} ` +
     `reply_via="${replyVia}" action_after="continue">\n${sanitizeContent(msg.content)}\n</c2c>\n` +
     buildReplyReminder(from, finalKind, roomId)

@@ -76,10 +76,21 @@ test("formatEnvelope: relay DM (to_alias has @host hash) is NOT auto-detected as
   // explicit relay metadata. Suffix-only guessing would confuse it with a room
   // message, while suffix-only exclusion would confuse valid hex room ids.
   const env = formatEnvelope(mk({ to_alias: "pi-abc@abcdef012345", source: "relay", kind: "dm" }));
+  assert.match(env, /source="relay"/);
   assert.match(env, /reply_via="c2c_pi_send"/);
   assert.match(env, /direct message from `storm`/);
   assert.doesNotMatch(env, /reply_via="c2c_pi_send_room"/);
   assert.doesNotMatch(env, /room message/);
+});
+
+test("formatEnvelope: broker messages keep source=broker by default", () => {
+  const env = formatEnvelope(mk({ source: undefined }));
+  assert.match(env, /source="broker"/);
+});
+
+test("formatEnvelope: explicit broker source remains broker", () => {
+  const env = formatEnvelope(mk({ source: "broker" }));
+  assert.match(env, /source="broker"/);
 });
 
 test("isRoomMessage: DM has no #", () => {
