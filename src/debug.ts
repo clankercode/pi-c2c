@@ -148,6 +148,45 @@ export function collectDebugProblems(state: DebugStateInput): DebugProblem[] {
     });
   }
 
+  // Relay problem detection: missing relay identity or missing_proof_field.
+  // These are the most common causes of relay registration failure when the
+  // relay requires PoW (C2C_RELAY_POW=1) or is in production mode.
+  if (state.relayEnabled && !state.relayRegistered && state.relayError) {
+    const err = state.relayError;
+    // Check for missing identity (no local Ed25519 keypair)
+    if (
+      err.includes("no relay identity") ||
+      err.includes("identity not found") ||
+      err.includes("identity.json") ||
+      err.includes("No identity file")
+    ) {
+      problems.push({
+        severity: "error",
+        field: "relayIdentity",
+        message: "no relay identity (local Ed25519 keypair not initialized)",
+        remedy: "run `c2c relay identity init` to create one; this is required for authenticated relay registration",
+      });
+    } else if (err.includes("missing_proof_field")) {
+      // The relay requires proof fields but they were missing — almost always
+      // because the CLI tried to register without an identity.
+      problems.push({
+        severity: "error",
+        field: "relayProof",
+        message: `relay requires proof fields but they were missing: ${err}`,
+        remedy: "run `c2c relay identity init` to create an identity; the relay needs it to authenticate registration requests",
+      });
+    } else {
+      // Generic relay error — surface it as a warning so the user knows
+      // something went wrong.
+      problems.push({
+        severity: "warning",
+        field: "relayError",
+        message: `relay registration failed: ${err}`,
+        remedy: "run `c2c relay doctor` to diagnose; check network and relay configuration",
+      });
+    }
+  }
+
   return problems;
 }
 

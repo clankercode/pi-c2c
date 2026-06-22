@@ -595,55 +595,66 @@ export default function c2cExtension(pi: ExtensionAPI): void {
     if (relayEnabled && identity) {
       try {
         const relayUrl = (process.env.C2C_PI_RELAY_URL ?? "").trim() || "https://relay.c2c.im";
-        // Ensure relay setup has been run so the CLI knows the relay URL.
-        const existing = await cli!.relaySetupShow().catch(() => null);
-        if (!existing || !existing.url) {
-          await cli!.relaySetup({ url: relayUrl });
-        }
-        const hostHash = computeHostHash();
-        const relayAlias = deriveRelayAlias(identity.alias, hostHash);
-        const reg = await cli!.relayRegister(relayAlias, { relayUrl });
-        relayRegistered = true;
-        relayAddress = relayAlias;
-        relayError = undefined;
-        // The relay stores our opaque_host_id in the lease (c2c slice 1 of
-        // the opaque_host_id design). Use it if present; otherwise fall back
-        // to the address host part.
-        relayHostId = reg?.opaqueHostId ?? relayAlias.split("@")[1];
-        relayHostIdVerified = relayHostId === hostHash;
-        // Sanity-check via relay list that the stored id matches what we
-        // sent. This catches env-var drift, relay API changes, and recipe
-        // mismatches early.
-        try {
-          const peers = await cli!.relayList();
-          const self = peers.find((p) => p.alias === relayAlias);
-          if (self) {
-            const suffix = self.opaqueHostId ?? self.alias.split("@")[1];
-            if (suffix && suffix !== hostHash) {
-              relayHostIdVerified = false;
-              relayError = `opaque_host_id mismatch: local=${hostHash} relay=${suffix}`;
-            } else if (suffix === hostHash) {
-              relayHostIdVerified = true;
-            }
+        
+        // Pre-check: relay registration requires a local Ed25519 identity.
+        // If missing, skip registration with an actionable error instead of
+        // letting a PoW/prod relay fail with a raw `missing_proof_field` error.
+        const relayIdentityCheck = await cli!.relayIdentity().catch(() => null);
+        if (!relayIdentityCheck) {
+          relayRegistered = false;
+          relayError = "no relay identity; run `c2c relay identity init` to create one";
+          // Skip relay registration entirely — proceed with local broker only.
+        } else {
+          // Ensure relay setup has been run so the CLI knows the relay URL.
+          const existing = await cli!.relaySetupShow().catch(() => null);
+          if (!existing || !existing.url) {
+            await cli!.relaySetup({ url: relayUrl });
           }
-        } catch {
-          // Verification is best-effort; don't fail the whole registration
-          // over a list call that didn't work.
-        }
+          const hostHash = computeHostHash();
+          const relayAlias = deriveRelayAlias(identity.alias, hostHash);
+          const reg = await cli!.relayRegister(relayAlias, { relayUrl });
+          relayRegistered = true;
+          relayAddress = relayAlias;
+          relayError = undefined;
+          // The relay stores our opaque_host_id in the lease (c2c slice 1 of
+          // the opaque_host_id design). Use it if present; otherwise fall back
+          // to the address host part.
+          relayHostId = reg?.opaqueHostId ?? relayAlias.split("@")[1];
+          relayHostIdVerified = relayHostId === hostHash;
+          // Sanity-check via relay list that the stored id matches what we
+          // sent. This catches env-var drift, relay API changes, and recipe
+          // mismatches early.
+          try {
+            const peers = await cli!.relayList();
+            const self = peers.find((p) => p.alias === relayAlias);
+            if (self) {
+              const suffix = self.opaqueHostId ?? self.alias.split("@")[1];
+              if (suffix && suffix !== hostHash) {
+                relayHostIdVerified = false;
+                relayError = `opaque_host_id mismatch: local=${hostHash} relay=${suffix}`;
+              } else if (suffix === hostHash) {
+                relayHostIdVerified = true;
+              }
+            }
+          } catch {
+            // Verification is best-effort; don't fail the whole registration
+            // over a list call that didn't work.
+          }
 
-        // Start the relay WebSocket watcher (slice 3 of push-delivery design).
-        // Spawns `c2c relay subscribe` and fires pollTick on DM frames.
-        if (relayWatcher) relayWatcher.stop();
-        relayWatcher = new RelayWatcher({
-          alias: relayAlias,
-          relayUrl,
-          onChange: () => void pollTick(),
-          onStateChange: (state) => {
-            relayWsState = state;
-          },
-        });
-        relayWatcher.start();
-        relayWsState = relayWatcher.state;
+          // Start the relay WebSocket watcher (slice 3 of push-delivery design).
+          // Spawns `c2c relay subscribe` and fires pollTick on DM frames.
+          if (relayWatcher) relayWatcher.stop();
+          relayWatcher = new RelayWatcher({
+            alias: relayAlias,
+            relayUrl,
+            onChange: () => void pollTick(),
+            onStateChange: (state) => {
+              relayWsState = state;
+            },
+          });
+          relayWatcher.start();
+          relayWsState = relayWatcher.state;
+        }
       } catch (e: unknown) {
         relayRegistered = false;
         relayError = e instanceof Error ? e.message : String(e);

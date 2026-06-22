@@ -202,3 +202,85 @@ test("collectDebugState: peer status defaults to zero/empty when absent", () => 
   assert.ok(out.includes("peerStatusCount: 0"));
   assert.ok(out.includes("peerStatusSample: []"));
 });
+
+// --- Relay identity problem detection ---
+
+test("collectDebugProblems: relay enabled but not registered with missing identity error", () => {
+  const problems = collectDebugProblems({
+    ...BASE_STATE,
+    relayEnabled: true,
+    relayRegistered: false,
+    relayError: "no relay identity; run `c2c relay identity init` to create one",
+  });
+  const relayProblem = problems.find((p) => p.field === "relayIdentity");
+  assert.ok(relayProblem, "expected relayIdentity problem");
+  assert.equal(relayProblem!.severity, "error");
+  assert.ok(relayProblem!.message.includes("no relay identity"));
+  assert.ok(relayProblem!.remedy.includes("c2c relay identity init"));
+});
+
+test("collectDebugProblems: relay enabled but not registered with missing_proof_field error", () => {
+  const problems = collectDebugProblems({
+    ...BASE_STATE,
+    relayEnabled: true,
+    relayRegistered: false,
+    relayError: "missing_proof_field: identity_pk, signature, nonce, and timestamp are required when C2C_RELAY_POW=1",
+  });
+  const relayProblem = problems.find((p) => p.field === "relayProof");
+  assert.ok(relayProblem, "expected relayProof problem");
+  assert.equal(relayProblem!.severity, "error");
+  assert.ok(relayProblem!.message.includes("missing_proof_field"));
+  assert.ok(relayProblem!.remedy.includes("c2c relay identity init"));
+});
+
+test("collectDebugProblems: relay enabled but not registered with generic error", () => {
+  const problems = collectDebugProblems({
+    ...BASE_STATE,
+    relayEnabled: true,
+    relayRegistered: false,
+    relayError: "connection_error: network unreachable",
+  });
+  const relayProblem = problems.find((p) => p.field === "relayError");
+  assert.ok(relayProblem, "expected relayError problem");
+  assert.equal(relayProblem!.severity, "warning");
+  assert.ok(relayProblem!.message.includes("connection_error"));
+  assert.ok(relayProblem!.remedy.includes("c2c relay doctor"));
+});
+
+test("collectDebugProblems: relay disabled does not produce relay problems", () => {
+  const problems = collectDebugProblems({
+    ...BASE_STATE,
+    relayEnabled: false,
+    relayRegistered: false,
+    relayError: "some error",
+  });
+  const relayProblems = problems.filter((p) =>
+    ["relayIdentity", "relayProof", "relayError"].includes(p.field)
+  );
+  assert.equal(relayProblems.length, 0, "no relay problems when relay disabled");
+});
+
+test("collectDebugProblems: relay registered does not produce relay problems", () => {
+  const problems = collectDebugProblems({
+    ...BASE_STATE,
+    relayEnabled: true,
+    relayRegistered: true,
+    relayError: undefined,
+  });
+  const relayProblems = problems.filter((p) =>
+    ["relayIdentity", "relayProof", "relayError"].includes(p.field)
+  );
+  assert.equal(relayProblems.length, 0, "no relay problems when relay registered");
+});
+
+test("collectDebugState: surfaces relay identity problem with remedy", () => {
+  const out = collectDebugState({
+    ...BASE_STATE,
+    relayEnabled: true,
+    relayRegistered: false,
+    relayError: "no relay identity; run `c2c relay identity init` to create one",
+  });
+  assert.ok(out.includes("[error] relayIdentity:"));
+  assert.ok(out.includes("remedy:"));
+  assert.ok(out.includes("c2c relay identity init"));
+});
