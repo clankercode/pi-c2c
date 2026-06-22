@@ -1,6 +1,6 @@
 {
   "name": "pi-c2c",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "Native c2c for Pi — anywhere-to-anywhere messaging between AI coding agents. Adds c2c send/list/rooms tools, slash commands, and background auto-delivery of inbound messages straight into pi's transcript.",
   "type": "module",
   "private": false,
