@@ -53,6 +53,7 @@ import {
   getParentAlias,
   notifySubagentRegistered,
   observeSubagentRegistrations,
+  observeSubagentRegistrationsFor,
   readSubagentLoadHint,
   setParentAlias,
 } from "./subagent.ts";
@@ -259,6 +260,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   // debugging the delivery delay.
   let queuedSinceMs: number | undefined;
   let stopSubagentObserver: (() => void) | null = null;
+  let stopSelfObserver: (() => void) | null = null;
 
   function spoolScopeKey(id: Identity): string {
     if (!subagentHint) return "parent";
@@ -524,7 +526,26 @@ export default function c2cExtension(pi: ExtensionAPI): void {
           });
         }
       } else {
-        notifySubagentRegistered({ agentId: subagentHint.agentId, alias: identity.alias });
+        // Register this agent's own observer so it can receive notifications
+        // from its own children (nested subagents). The observer is keyed by
+        // this agent's ID so notifySubagentRegistered routes grandchild
+        // registrations to the correct parent, not the root coordinator.
+        const selfAgentId = subagentHint.agentId;
+        if (selfAgentId) {
+          stopSelfObserver = observeSubagentRegistrationsFor(selfAgentId, (notice, registration) => {
+            try {
+              const args = buildRegistrationMessageArgs(notice, registration);
+              pi.sendMessage(args.message, args.options);
+            } catch {
+              // Best-effort.
+            }
+          });
+        }
+        notifySubagentRegistered({
+          agentId: selfAgentId,
+          alias: identity.alias,
+          parentAgentId: subagentHint.parentAgentId,
+        });
       }
       barState.alias = identity.alias;
       barState.registered = true;
@@ -742,6 +763,8 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       stopSubagentObserver?.();
       stopSubagentObserver = null;
     }
+    stopSelfObserver?.();
+    stopSelfObserver = null;
   });
 
   // --- helpers for tools/commands -------------------------------------------

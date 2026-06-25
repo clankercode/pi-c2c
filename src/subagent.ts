@@ -6,6 +6,7 @@ const GLOBAL_KEY = "__piC2cSubagents";
 export interface SubagentLoadHint {
   depth: number;
   agentId?: string;
+  parentAgentId?: string;
 }
 
 export interface SubagentRegistration {
@@ -58,8 +59,14 @@ export function buildRegistrationMessageArgs(
   };
 }
 
+type SubagentObserver = (notice: string, registration: SubagentRegistration) => void;
+
+/** Well-known key for the root coordinator's observer. */
+const ROOT_OBSERVER_KEY = "__root__";
+
 interface SubagentGlobal {
-  observers: Set<(notice: string, registration: SubagentRegistration) => void>;
+  /** Observers keyed by agent ID. Root coordinator uses ROOT_OBSERVER_KEY. */
+  observers: Map<string, SubagentObserver>;
   seenAliases: Set<string>;
   parentAlias?: string;
 }
@@ -68,7 +75,7 @@ function state(): SubagentGlobal {
   const g = globalThis as Record<string, unknown>;
   if (!g[GLOBAL_KEY]) {
     g[GLOBAL_KEY] = {
-      observers: new Set(),
+      observers: new Map(),
       seenAliases: new Set(),
     } satisfies SubagentGlobal;
   }
@@ -82,7 +89,8 @@ export function readSubagentLoadHint(): SubagentLoadHint | null {
   const depth = rec.depth;
   if (typeof depth !== "number" || !Number.isFinite(depth) || depth <= 0) return null;
   const agentId = typeof rec.agentId === "string" ? rec.agentId : undefined;
-  return { depth, agentId };
+  const parentAgentId = typeof rec.parentAgentId === "string" ? rec.parentAgentId : undefined;
+  return { depth, agentId, parentAgentId };
 }
 
 export function setParentAlias(alias: string | undefined): void {
@@ -106,23 +114,61 @@ Your parent c2c alias is \`${opts.parentAlias}\`.
 To report progress or ask the parent a question, call \`c2c_pi_send(target="${opts.parentAlias}", body="<message>")\`.`;
 }
 
+/**
+ * Register an observer for the root coordinator. Notifications for direct
+ * subagents (parentAgentId matches this agent) and orphaned registrations
+ * (no parent observer found) are delivered here.
+ */
 export function observeSubagentRegistrations(
   observer: (notice: string, registration: SubagentRegistration) => void,
 ): () => void {
   const s = state();
-  s.observers.add(observer);
+  s.observers.set(ROOT_OBSERVER_KEY, observer);
   return () => {
-    s.observers.delete(observer);
+    s.observers.delete(ROOT_OBSERVER_KEY);
   };
 }
 
-export function notifySubagentRegistered(registration: SubagentRegistration): void {
+/**
+ * Register an observer for a specific agent (by its agentId). When a
+ * subagent registers, notifications are routed to the spawning parent's
+ * observer first. The root coordinator's observer acts as fallback.
+ */
+export function observeSubagentRegistrationsFor(
+  agentId: string,
+  observer: (notice: string, registration: SubagentRegistration) => void,
+): () => void {
+  const s = state();
+  s.observers.set(agentId, observer);
+  return () => {
+    s.observers.delete(agentId);
+  };
+}
+
+export interface NotifyRegistrationInput extends SubagentRegistration {
+  /**
+   * The agentId of the parent that spawned this subagent. Used to route
+   * the notification to the correct observer. When absent or when no
+   * matching observer is found, falls back to the root coordinator.
+   */
+  parentAgentId?: string;
+}
+
+export function notifySubagentRegistered(registration: NotifyRegistrationInput): void {
   const s = state();
   if (s.seenAliases.has(registration.alias)) return;
   s.seenAliases.add(registration.alias);
   const label = registration.agentId?.trim() || "Subagent";
   const notice = `Subagent ${label} registered as \`${registration.alias}\`.`;
-  for (const observer of s.observers) {
-    observer(notice, registration);
+
+  // Route to the spawning parent's observer if available; otherwise root.
+  const parentKey = registration.parentAgentId;
+  const parentObserver = parentKey ? s.observers.get(parentKey) : undefined;
+  if (parentObserver) {
+    parentObserver(notice, registration);
+  } else {
+    // Fallback: root coordinator (or any observer if root isn't registered).
+    const rootObserver = s.observers.get(ROOT_OBSERVER_KEY);
+    if (rootObserver) rootObserver(notice, registration);
   }
 }
