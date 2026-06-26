@@ -698,11 +698,12 @@ function renderOne(content: string, selfAlias: string, details?: Partial<C2cDeli
 
 describe("buildCompactLine: route color coding", () => {
   // NOTE: the renderer derives the route from the alias alone
-  // (`routeForAlias`: has-@ → relay, default → sessions). It cannot
-  // distinguish local from sessions without extra context. The "local"
-  // branch of buildPrefix is reserved for when the extension starts
-  // passing per-message route info in details; until then it is dead
-  // code. We only test the two reachable routes here.
+  // (`routeForAlias`: has-@ → relay, default → unknown). It cannot
+  // distinguish local/sessions/unknown for a bare alias without extra
+  // context, so a bare alias reports the `unknown` route (◌). The "local"
+  // and "sessions" branches of buildPrefix are reserved for when the
+  // extension starts passing per-message route info in details; until then
+  // they are dead code. We only test the two reachable routes here.
 
   it("relay route (alias matches alias@12hex) renders route in accent color", () => {
     const { events } = renderOne(
@@ -714,13 +715,13 @@ describe("buildCompactLine: route color coding", () => {
     assert.equal(routeEvents[0].color, "accent");
   });
 
-  it("sessions route (alias does not match relay address) renders route in borderMuted", () => {
+  it("unknown route (bare alias, no @host suffix) renders route in borderMuted", () => {
     const { events } = renderOne(
       "<c2c event=\"message\" from=\"someone\">hi</c2c>",
       "me",
     );
-    const routeEvents = events.filter((e) => e.text === "◎");
-    assert.ok(routeEvents.length > 0, "expected ◎ in render");
+    const routeEvents = events.filter((e) => e.text === "◌");
+    assert.ok(routeEvents.length > 0, "expected ◌ in render");
     assert.equal(routeEvents[0].color, "borderMuted");
   });
 });

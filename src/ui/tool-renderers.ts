@@ -207,6 +207,10 @@ const ROUTES = {
   local: "⌂",
   sessions: "◎",
   relay: "⇄",
+  // Mirrors the compact message renderer's route vocabulary. Not used by the
+  // outgoing send path (sends always know their route), but kept so the route
+  // union lines up across the two ROUTES consts.
+  unknown: "◌",
 } as const;
 
 /** `c2c.<action>` token for a send result, keyed by send kind. */

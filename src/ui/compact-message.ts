@@ -43,6 +43,10 @@ const ROUTES = {
   local: "⌂",
   sessions: "◎",
   relay: "⇄",
+  // Route could not be determined from the message alone (e.g. an inbound bare
+  // alias with no `@<host>` suffix). Distinct from `sessions` so an optimistic
+  // guess is no longer conflated with genuine sessions delivery.
+  unknown: "◌",
 } as const;
 
 /** ASCII fallbacks when terminal Unicode support is uncertain. */
@@ -59,6 +63,7 @@ const ASCII_ROUTES = {
   local: "[local]",
   sessions: "[sessions]",
   relay: "[relay]",
+  unknown: "[?]",
 } as const;
 
 /** Detect whether we should use ASCII fallbacks.
@@ -68,11 +73,11 @@ function useAsciiGlyphs(): boolean {
 }
 
 /** Pick a route glyph for a sender alias. Relay aliases end with `@<hash>`;
- *  otherwise we can't know the broker from the message alone, so we default
- *  to the cross-repo sessions route for non-local-looking aliases. */
+ *  otherwise we can't know the broker from the message alone, so we report the
+ *  `unknown` route rather than optimistically claiming sessions delivery. */
 function routeForAlias(alias: string): keyof typeof ROUTES {
   if (parseRelayAlias(alias)) return "relay";
-  return "sessions";
+  return "unknown";
 }
 
 /** Direction arrow for compact message headers. */
@@ -128,10 +133,12 @@ function buildPrefix(
       break;
   }
 
-  // Route gets a distinct color so ⌂/◎/⇄ are scannable at a glance.
+  // Route gets a distinct color so ⌂/◎/⇄/◌ are scannable at a glance.
   // local=success (green, "your home broker"),
   // sessions=borderMuted (grey, the in-the-swarm default),
-  // relay=accent (cyan, "this is the cross-machine one").
+  // relay=accent (cyan, "this is the cross-machine one"),
+  // unknown=borderMuted (grey, "couldn't determine the route") — same grey as
+  // sessions but a hollow ◌ glyph distinguishes the can't-tell case.
   const routeColor: import("@earendil-works/pi-coding-agent").ThemeColor =
     route === "local" ? "success" :
     route === "relay" ? "accent" :
