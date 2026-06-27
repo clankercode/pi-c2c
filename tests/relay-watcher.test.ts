@@ -111,7 +111,7 @@ test("RelayWatcher: converts https relay URL to http for subscribe", async () =>
   const dir = tmpDir();
   const argsPath = path.join(dir, "args.txt");
   const bin = createArgCaptureBinary(dir, argsPath);
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
@@ -138,7 +138,7 @@ test("RelayWatcher: converts https relay URL to http for subscribe", async () =>
 });
 
 test("RelayWatcher: constructor sets initial state correctly", () => {
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     onChange: () => {},
@@ -150,7 +150,7 @@ test("RelayWatcher: constructor sets initial state correctly", () => {
 test("RelayWatcher: isRunning reflects state after start", () => {
   const dir = tmpDir();
   const bin = createMockBinary(dir, []);
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
@@ -167,7 +167,7 @@ test("RelayWatcher: isRunning reflects state after start", () => {
 test("RelayWatcher: running subscribe process is reported connected while waiting for frames", () => {
   const dir = tmpDir();
   const bin = createMockBinary(dir, []);
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
@@ -189,7 +189,7 @@ test("RelayWatcher: fires onChange when JSON line is received", async () => {
   const bin = createMockBinary(dir, [jsonLine]);
 
   let calls = 0;
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
@@ -217,7 +217,7 @@ test("RelayWatcher: debounces burst events", async () => {
   const bin = createMockBinary(dir, lines);
 
   let calls = 0;
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
@@ -240,7 +240,7 @@ test("RelayWatcher: debounces burst events", async () => {
 test("RelayWatcher: stop() halts and is idempotent", () => {
   const dir = tmpDir();
   const bin = createMockBinary(dir, []);
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
@@ -256,7 +256,7 @@ test("RelayWatcher: stop() halts and is idempotent", () => {
 });
 
 test("RelayWatcher: cannot start after stop", () => {
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     onChange: () => {},
@@ -268,7 +268,7 @@ test("RelayWatcher: cannot start after stop", () => {
 test("RelayWatcher: start is idempotent", () => {
   const dir = tmpDir();
   const bin = createMockBinary(dir, []);
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
@@ -287,7 +287,7 @@ test("RelayWatcher: transitions to connected on first JSON line", async () => {
   const bin = createMockBinary(dir, [jsonLine]);
 
   const states: RelayWatcherState[] = [];
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
@@ -309,7 +309,7 @@ test("RelayWatcher: transitions to reconnecting on process exit", async () => {
   const bin = createExitingBinary(dir, 1);
 
   const states: RelayWatcherState[] = [];
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
@@ -338,7 +338,7 @@ test("RelayWatcher: ignores non-JSON lines", async () => {
   const bin = createMockBinary(dir, lines);
 
   let calls = 0;
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
@@ -357,7 +357,7 @@ test("RelayWatcher: ignores non-JSON lines", async () => {
 });
 
 test("RelayWatcher: tolerates missing binary (no throw)", () => {
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin: "/nonexistent/path/to/c2c",
@@ -377,7 +377,7 @@ test("RelayWatcher: errors in onChange do not crash watcher", async () => {
   const bin = createMockBinary(dir, lines);
 
   let calls = 0;
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
@@ -403,7 +403,7 @@ test("RelayWatcher: records child PID on start and removes it on stop", async ()
   const oldPidFile = process.env[RELAY_WATCHER_PID_FILE_ENV];
   process.env[RELAY_WATCHER_PID_FILE_ENV] = pidFile;
   const bin = createMockBinary(dir, []);
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: "test@123",
     relayUrl: "https://relay.example.com",
     bin,
@@ -552,7 +552,7 @@ test("RelayWatcher: E2E with real c2c relay subscribe (skipped without C2C_PI_E2
   }
 
   const states: RelayWatcherState[] = [];
-  const w = new RelayWatcher({
+  const w = new RelayWatcher({ useDaemon: false,
     alias: relayAlias,
     relayUrl,
     onChange: () => {},
