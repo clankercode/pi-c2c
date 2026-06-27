@@ -15,7 +15,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
-import { RelayWatcher, type RelayWatcherState } from "../src/relay-watcher.ts";
+import {
+  cleanupStaleRelayWatcherProcesses,
+  RelayWatcher,
+  RELAY_WATCHER_PID_FILE_ENV,
+  type RelayWatcherPidRecord,
+  type RelayWatcherState,
+} from "../src/relay-watcher.ts";
 
 let counter = 0;
 function tmpDir(): string {
@@ -78,6 +84,27 @@ exec sleep 3600
   fs.writeFileSync(scriptPath, script);
   fs.chmodSync(scriptPath, 0o755);
   return scriptPath;
+}
+
+function readPidRecords(pidFile: string): RelayWatcherPidRecord[] {
+  if (!fs.existsSync(pidFile)) return [];
+  return JSON.parse(fs.readFileSync(pidFile, "utf8")).records;
+}
+
+function writePidRecords(pidFile: string, records: RelayWatcherPidRecord[]): void {
+  fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+  fs.writeFileSync(pidFile, JSON.stringify({ version: 1, records }), "utf8");
+}
+
+async function waitForProcessExit(pid: number, timeoutMs = 2000): Promise<boolean> {
+  return waitFor(() => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  }, timeoutMs);
 }
 
 test("RelayWatcher: converts https relay URL to http for subscribe", async () => {
@@ -366,6 +393,141 @@ test("RelayWatcher: errors in onChange do not crash watcher", async () => {
     assert.ok(calls >= 1, `expected at least 1 call despite errors, got ${calls}`);
   } finally {
     w.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("RelayWatcher: records child PID on start and removes it on stop", async () => {
+  const dir = tmpDir();
+  const pidFile = path.join(dir, "relay-watcher-pids.json");
+  const oldPidFile = process.env[RELAY_WATCHER_PID_FILE_ENV];
+  process.env[RELAY_WATCHER_PID_FILE_ENV] = pidFile;
+  const bin = createMockBinary(dir, []);
+  const w = new RelayWatcher({
+    alias: "test@123",
+    relayUrl: "https://relay.example.com",
+    bin,
+    onChange: () => {},
+  });
+
+  try {
+    w.start();
+    const wroteRecord = await waitFor(() => readPidRecords(pidFile).length === 1, 2000);
+    assert.ok(wroteRecord, "watcher did not write a PID record");
+    const [record] = readPidRecords(pidFile);
+    assert.equal(record.alias, "test@123");
+    assert.equal(record.ownerPid, process.pid);
+    assert.equal(record.sessionId.startsWith("relay-watcher-"), true);
+    assert.equal(typeof record.pid, "number");
+
+    w.stop();
+    const removedRecord = await waitFor(() => readPidRecords(pidFile).length === 0, 2000);
+    assert.ok(removedRecord, "watcher did not remove its PID record on stop");
+  } finally {
+    w.stop();
+    if (oldPidFile === undefined) delete process.env[RELAY_WATCHER_PID_FILE_ENV];
+    else process.env[RELAY_WATCHER_PID_FILE_ENV] = oldPidFile;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("RelayWatcher: cleanup kills tracked subscribe process whose owner is gone", async () => {
+  const dir = tmpDir();
+  const pidFile = path.join(dir, "relay-watcher-pids.json");
+  const bin = createMockBinary(dir, []);
+  const child = spawn(bin, [
+    "relay",
+    "subscribe",
+    "--alias",
+    "test@123",
+    "--relay-url",
+    "http://relay.example.com",
+  ], { stdio: ["ignore", "ignore", "ignore"] });
+  assert.ok(child.pid, "mock child did not get a PID");
+  writePidRecords(pidFile, [
+    {
+      alias: "test@123",
+      sessionId: "relay-watcher-stale",
+      pid: child.pid,
+      ownerPid: 999_999_999,
+      startedAt: 123,
+    },
+  ]);
+
+  try {
+    await cleanupStaleRelayWatcherProcesses({ alias: "test@123", pidFile });
+    const exited = await waitForProcessExit(child.pid, 2000);
+    assert.ok(exited, "stale tracked subscribe process was not killed");
+    assert.deepEqual(readPidRecords(pidFile), []);
+  } finally {
+    child.kill("SIGKILL");
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("RelayWatcher: cleanup kills stale tracked subagent alias under current alias prefix", async () => {
+  const dir = tmpDir();
+  const pidFile = path.join(dir, "relay-watcher-pids.json");
+  const bin = createMockBinary(dir, []);
+  const child = spawn(bin, [
+    "relay",
+    "subscribe",
+    "--alias",
+    "test-a123@123",
+    "--relay-url",
+    "http://relay.example.com",
+  ], { stdio: ["ignore", "ignore", "ignore"] });
+  assert.ok(child.pid, "mock child did not get a PID");
+  writePidRecords(pidFile, [
+    {
+      alias: "test-a123@123",
+      sessionId: "relay-watcher-stale-subagent",
+      pid: child.pid,
+      ownerPid: 999_999_999,
+      startedAt: 123,
+    },
+  ]);
+
+  try {
+    await cleanupStaleRelayWatcherProcesses({ alias: "test@123", pidFile });
+    const exited = await waitForProcessExit(child.pid, 2000);
+    assert.ok(exited, "stale tracked subagent subscribe process was not killed");
+    assert.deepEqual(readPidRecords(pidFile), []);
+  } finally {
+    child.kill("SIGKILL");
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("RelayWatcher: cleanup preserves tracked subscribe process while owner is alive", async () => {
+  const dir = tmpDir();
+  const pidFile = path.join(dir, "relay-watcher-pids.json");
+  const bin = createMockBinary(dir, []);
+  const child = spawn(bin, [
+    "relay",
+    "subscribe",
+    "--alias",
+    "test@123",
+    "--relay-url",
+    "http://relay.example.com",
+  ], { stdio: ["ignore", "ignore", "ignore"] });
+  assert.ok(child.pid, "mock child did not get a PID");
+  writePidRecords(pidFile, [
+    {
+      alias: "test@123",
+      sessionId: "relay-watcher-live",
+      pid: child.pid,
+      ownerPid: process.pid,
+      startedAt: 123,
+    },
+  ]);
+
+  try {
+    await cleanupStaleRelayWatcherProcesses({ alias: "test@123", pidFile });
+    assert.doesNotThrow(() => process.kill(child.pid!, 0));
+    assert.equal(readPidRecords(pidFile).length, 1);
+  } finally {
+    child.kill("SIGKILL");
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -22,8 +22,9 @@
  * (slice 3) for the full design rationale.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 
@@ -34,6 +35,265 @@ export type RelayWatcherState = "connected" | "reconnecting" | "stopped";
 
 function subscribeRelayUrl(relayUrl: string): string {
   return relayUrl.replace(/^https:\/\//i, "http://");
+}
+
+export const RELAY_WATCHER_PID_FILE_ENV = "C2C_PI_RELAY_WATCHER_PID_FILE";
+
+export interface RelayWatcherPidRecord {
+  alias: string;
+  sessionId: string;
+  pid: number;
+  ownerPid: number;
+  startedAt: number;
+}
+
+interface RelayWatcherPidRegistry {
+  version: 1;
+  records: RelayWatcherPidRecord[];
+}
+
+const PID_REGISTRY_VERSION = 1;
+const EXIT_SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+const activeWatchers = new Set<RelayWatcher>();
+const signalHandlers = new Map<NodeJS.Signals, () => void>();
+let exitHandlerInstalled = false;
+
+function relayWatcherPidFile(): string {
+  return process.env[RELAY_WATCHER_PID_FILE_ENV]
+    ?? path.join(os.homedir(), ".pi", "c2c", "relay-watcher-pids.json");
+}
+
+function isPositivePid(pid: number): boolean {
+  return Number.isInteger(pid) && pid > 0;
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!isPositivePid(pid)) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    return code === "EPERM";
+  }
+}
+
+function normalizePidRegistry(raw: unknown): RelayWatcherPidRegistry {
+  const records = Array.isArray((raw as { records?: unknown })?.records)
+    ? (raw as { records: unknown[] }).records
+    : [];
+  return {
+    version: PID_REGISTRY_VERSION,
+    records: records.flatMap((r): RelayWatcherPidRecord[] => {
+      if (!r || typeof r !== "object") return [];
+      const rec = r as Partial<RelayWatcherPidRecord>;
+      if (typeof rec.alias !== "string" || typeof rec.sessionId !== "string") return [];
+      if (!isPositivePid(rec.pid ?? 0) || !isPositivePid(rec.ownerPid ?? 0)) return [];
+      if (typeof rec.startedAt !== "number" || !Number.isFinite(rec.startedAt)) return [];
+      return [{
+        alias: rec.alias,
+        sessionId: rec.sessionId,
+        pid: rec.pid!,
+        ownerPid: rec.ownerPid!,
+        startedAt: rec.startedAt,
+      }];
+    }),
+  };
+}
+
+function readPidRegistry(pidFile = relayWatcherPidFile()): RelayWatcherPidRegistry {
+  try {
+    return normalizePidRegistry(JSON.parse(fs.readFileSync(pidFile, "utf8")));
+  } catch {
+    return { version: PID_REGISTRY_VERSION, records: [] };
+  }
+}
+
+function writePidRegistry(registry: RelayWatcherPidRegistry, pidFile = relayWatcherPidFile()): void {
+  fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+  const tmp = `${pidFile}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(registry, null, 2), "utf8");
+  fs.renameSync(tmp, pidFile);
+}
+
+function updatePidRegistry(
+  mutator: (records: RelayWatcherPidRecord[]) => RelayWatcherPidRecord[],
+  pidFile = relayWatcherPidFile(),
+): void {
+  const current = readPidRegistry(pidFile);
+  const records = mutator(current.records);
+  writePidRegistry({ version: PID_REGISTRY_VERSION, records }, pidFile);
+}
+
+function registerRelayWatcherPid(record: RelayWatcherPidRecord, pidFile = relayWatcherPidFile()): void {
+  updatePidRegistry(
+    (records) => [
+      ...records.filter((r) => !(r.pid === record.pid && r.sessionId === record.sessionId)),
+      record,
+    ],
+    pidFile,
+  );
+}
+
+function unregisterRelayWatcherPid(pid: number, sessionId: string, pidFile = relayWatcherPidFile()): void {
+  updatePidRegistry(
+    (records) => records.filter((r) => !(r.pid === pid && r.sessionId === sessionId)),
+    pidFile,
+  );
+}
+
+function procCmdline(pid: number): string[] | null {
+  try {
+    const raw = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    const args = raw.split("\0").filter(Boolean);
+    return args.length > 0 ? args : null;
+  } catch {
+    return null;
+  }
+}
+
+function commandHasRelaySubscribeAlias(args: string[], alias: string): boolean {
+  const relayIndex = args.indexOf("relay");
+  const subscribeIndex = args.indexOf("subscribe");
+  const aliasFlagIndex = args.indexOf("--alias");
+  return relayIndex >= 0
+    && subscribeIndex > relayIndex
+    && aliasFlagIndex >= 0
+    && args[aliasFlagIndex + 1] === alias;
+}
+
+function commandLineLooksLikeRecord(pid: number, alias: string): boolean {
+  const args = procCmdline(pid);
+  return args ? commandHasRelaySubscribeAlias(args, alias) : true;
+}
+
+function killProcess(pid: number, signal: NodeJS.Signals = "SIGTERM"): void {
+  try {
+    process.kill(pid, signal);
+  } catch {
+    // Already dead or not ours to kill; cleanup will still prune the record.
+  }
+}
+
+function aliasPrefix(alias: string): string {
+  return alias.split("@")[0] ?? alias;
+}
+
+function parsedAliasMatchesPrefix(processAlias: string, targetAlias: string): boolean {
+  if (processAlias === targetAlias) return true;
+  const target = aliasPrefix(targetAlias);
+  const candidate = aliasPrefix(processAlias);
+  return candidate === target || candidate.startsWith(`${target}-a`);
+}
+
+function parsePsSubscribeLine(line: string): { pid: number; ppid: number; args: string[] } | null {
+  const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.+)$/);
+  if (!m) return null;
+  const [, pidRaw, ppidRaw, command] = m;
+  // c2c relay aliases never contain whitespace, and we only need enough shell
+  // splitting to find the fixed flags in `c2c relay subscribe --alias <alias>`.
+  const args = command.trim().split(/\s+/);
+  return {
+    pid: Number.parseInt(pidRaw, 10),
+    ppid: Number.parseInt(ppidRaw, 10),
+    args,
+  };
+}
+
+async function cleanupUntrackedOrphanSubscribeProcesses(alias: string, knownPids: Set<number>): Promise<void> {
+  let output = "";
+  try {
+    output = await new Promise<string>((resolve, reject) => {
+      execFile("ps", ["-eo", "pid=,ppid=,args="], { encoding: "utf8" }, (err, stdout) => {
+        if (err) reject(err);
+        else resolve(stdout);
+      });
+    });
+  } catch {
+    return;
+  }
+  for (const line of output.split("\n")) {
+    const row = parsePsSubscribeLine(line);
+    if (!row || row.ppid !== 1 || knownPids.has(row.pid) || row.pid === process.pid) continue;
+    const aliasFlagIndex = row.args.indexOf("--alias");
+    const processAlias = aliasFlagIndex >= 0 ? row.args[aliasFlagIndex + 1] : undefined;
+    if (!processAlias || !parsedAliasMatchesPrefix(processAlias, alias)) continue;
+    if (!commandHasRelaySubscribeAlias(row.args, processAlias)) continue;
+    killProcess(row.pid);
+  }
+}
+
+export async function cleanupStaleRelayWatcherProcesses(opts: { alias: string; pidFile?: string }): Promise<void> {
+  const pidFile = opts.pidFile ?? relayWatcherPidFile();
+  const current = readPidRegistry(pidFile);
+  const next: RelayWatcherPidRecord[] = [];
+  const knownPids = new Set<number>();
+
+  for (const record of current.records) {
+    const childAlive = isProcessAlive(record.pid);
+    const ownerAlive = isProcessAlive(record.ownerPid);
+    if (!childAlive) continue;
+    knownPids.add(record.pid);
+
+    if (parsedAliasMatchesPrefix(record.alias, opts.alias) && !ownerAlive && commandLineLooksLikeRecord(record.pid, record.alias)) {
+      killProcess(record.pid);
+      continue;
+    }
+
+    next.push(record);
+  }
+
+  if (next.length !== current.records.length) {
+    writePidRegistry({ version: PID_REGISTRY_VERSION, records: next }, pidFile);
+  }
+  await cleanupUntrackedOrphanSubscribeProcesses(opts.alias, knownPids);
+}
+
+function cleanupActiveRelayWatchers(): void {
+  for (const watcher of [...activeWatchers]) {
+    watcher.stop();
+  }
+}
+
+function handleExit(): void {
+  cleanupActiveRelayWatchers();
+}
+
+function handleSignal(signal: NodeJS.Signals): void {
+  cleanupActiveRelayWatchers();
+  for (const [registeredSignal, handler] of signalHandlers) {
+    process.removeListener(registeredSignal, handler);
+  }
+  signalHandlers.clear();
+  const exitCode = signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 129;
+  process.exit(exitCode);
+}
+
+function registerActiveWatcher(watcher: RelayWatcher): void {
+  activeWatchers.add(watcher);
+  if (!exitHandlerInstalled) {
+    process.once("exit", handleExit);
+    exitHandlerInstalled = true;
+  }
+  for (const signal of EXIT_SIGNALS) {
+    if (signalHandlers.has(signal)) continue;
+    const handler = () => handleSignal(signal);
+    signalHandlers.set(signal, handler);
+    process.once(signal, handler);
+  }
+}
+
+function unregisterActiveWatcher(watcher: RelayWatcher): void {
+  activeWatchers.delete(watcher);
+  if (activeWatchers.size > 0) return;
+  if (exitHandlerInstalled) {
+    process.removeListener("exit", handleExit);
+    exitHandlerInstalled = false;
+  }
+  for (const [signal, handler] of signalHandlers) {
+    process.removeListener(signal, handler);
+  }
+  signalHandlers.clear();
 }
 
 export interface RelayWatcherOptions {
@@ -66,6 +326,7 @@ export class RelayWatcher {
   private readonly debounceMs: number;
   private readonly bin: string;
   private readonly sessionId: string;
+  private trackedPid: number | null = null;
 
   constructor(private readonly opts: RelayWatcherOptions) {
     this.debounceMs = opts.debounceMs ?? 50;
@@ -95,6 +356,9 @@ export class RelayWatcher {
     }
     if (this.child) return; // idempotent
 
+    // Fire-and-forget: cleanup is best-effort; don't block watcher startup.
+    void cleanupStaleRelayWatcherProcesses({ alias: this.opts.alias }).catch(() => {});
+
     // Check if the binary exists (for non-PATH binaries).
     const binPath = this.bin;
     if (binPath.includes(path.sep)) {
@@ -105,6 +369,7 @@ export class RelayWatcher {
       }
     }
 
+    registerActiveWatcher(this);
     this.spawnChild();
   }
 
@@ -125,6 +390,16 @@ export class RelayWatcher {
     }
   }
 
+  private unregisterTrackedPid(): void {
+    if (!this.trackedPid) return;
+    try {
+      unregisterRelayWatcherPid(this.trackedPid, this.sessionId);
+    } catch {
+      // Best-effort cleanup; the next watcher start will prune stale records.
+    }
+    this.trackedPid = null;
+  }
+
   private cleanup(): void {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
@@ -141,11 +416,21 @@ export class RelayWatcher {
       // end) open after the child dies — which keeps the Node event loop
       // alive indefinitely. Destroying the streams drops our handles so the
       // process can exit promptly on stop().
+      const pid = this.trackedPid ?? this.child.pid;
       this.child.stdout?.destroy();
       this.child.stderr?.destroy();
       this.child.kill("SIGTERM");
       this.child = null;
+      if (pid && pid !== this.trackedPid) {
+        try {
+          unregisterRelayWatcherPid(pid, this.sessionId);
+        } catch {
+          // Best-effort cleanup; the next watcher start will prune stale records.
+        }
+      }
+      this.unregisterTrackedPid();
     }
+    unregisterActiveWatcher(this);
     this.lineBuffer = "";
   }
 
@@ -175,6 +460,21 @@ export class RelayWatcher {
       return;
     }
 
+    if (this.child.pid) {
+      this.trackedPid = this.child.pid;
+      try {
+        registerRelayWatcherPid({
+          alias: this.opts.alias,
+          sessionId: this.sessionId,
+          pid: this.child.pid,
+          ownerPid: process.pid,
+          startedAt: Date.now(),
+        });
+      } catch {
+        // PID tracking is a cleanup aid, not required for relay delivery.
+      }
+    }
+
     this.setState("connected");
     this.backoffMs = 1000;
 
@@ -195,11 +495,13 @@ export class RelayWatcher {
 
     this.child.on("error", () => {
       // Spawn error — schedule reconnect.
+      this.unregisterTrackedPid();
       this.child = null;
       this.scheduleReconnect();
     });
 
     this.child.on("exit", (_code, _signal) => {
+      this.unregisterTrackedPid();
       this.child = null;
       if (!this.stopped) {
         this.scheduleReconnect();
