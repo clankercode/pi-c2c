@@ -1,41 +1,27 @@
 /**
- * RelayWatcher — WebSocket-based push for the c2c public relay.
+ * RelayWatcher — daemon-based push for the c2c public relay.
  *
- * Spawns `c2c relay subscribe --alias <alias> --relay-url <url>` as a child
- * process and watches its stdout for JSON lines. Each line is a DM frame:
- *   { "op": "dm", "from": "sender@hash", "body": "...", "ts": 1234 }
+ * Registers the alias with the c2c relay subscribe-daemon via IPC.
+ * The daemon manages the WebSocket connection; RelayWatcher receives
+ * DM notifications through the daemon's IPC socket.
  *
- * On receiving a frame, fires `onChange()` — identical to how BrokerWatcher
- * fires `onChange()` on file changes. The actual draining is done by
- * `pollTick()` which calls `relayDmPoll`; the message is already stored in
- * the relay's outbox before the WebSocket push fires. This preserves symmetry
- * with BrokerWatcher and lets dedup handle any double-delivery.
+ * Falls back to direct `c2c relay subscribe` child process if the daemon
+ * is unavailable and auto-start fails.
  *
- * Why this architecture?
- *   - RelayWatcher is a *trigger*, not a drainer. It does not parse message
- *     bodies or maintain a queue — `pollTick` does that.
- *   - Reconnection with exponential backoff handles transient network issues.
- *   - A failing relay subscribe does not break local delivery — the 60s
- *     safety-net `pollTick` catches up.
- *
- * See: .collab/design/2026-06-17T04-14-27Z-pi-c01ea5-push-delivery-design.md
- * (slice 3) for the full design rationale.
+ * See: .collab/design/2026-06-28T00-31+1000-relay-subscription-multiplexing.md
  */
 
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
+import { DaemonClient, type DaemonMessage } from "./daemon-client.ts";
 
 /** Callback fired when a relay DM frame arrives. */
 export type OnChange = () => void;
 
 export type RelayWatcherState = "connected" | "reconnecting" | "stopped";
-
-function subscribeRelayUrl(relayUrl: string): string {
-  return relayUrl.replace(/^https:\/\//i, "http://");
-}
 
 export const RELAY_WATCHER_PID_FILE_ENV = "C2C_PI_RELAY_WATCHER_PID_FILE";
 
@@ -190,8 +176,6 @@ function parsePsSubscribeLine(line: string): { pid: number; ppid: number; args: 
   const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.+)$/);
   if (!m) return null;
   const [, pidRaw, ppidRaw, command] = m;
-  // c2c relay aliases never contain whitespace, and we only need enough shell
-  // splitting to find the fixed flags in `c2c relay subscribe --alias <alias>`.
   const args = command.trim().split(/\s+/);
   return {
     pid: Number.parseInt(pidRaw, 10),
@@ -200,15 +184,10 @@ function parsePsSubscribeLine(line: string): { pid: number; ppid: number; args: 
   };
 }
 
-async function cleanupUntrackedOrphanSubscribeProcesses(alias: string, knownPids: Set<number>): Promise<void> {
+function cleanupUntrackedOrphanSubscribeProcesses(alias: string, knownPids: Set<number>): void {
   let output = "";
   try {
-    output = await new Promise<string>((resolve, reject) => {
-      execFile("ps", ["-eo", "pid=,ppid=,args="], { encoding: "utf8" }, (err, stdout) => {
-        if (err) reject(err);
-        else resolve(stdout);
-      });
-    });
+    output = execFileSync("ps", ["-eo", "pid=,ppid=,args="], { encoding: "utf8" });
   } catch {
     return;
   }
@@ -246,7 +225,7 @@ export async function cleanupStaleRelayWatcherProcesses(opts: { alias: string; p
   if (next.length !== current.records.length) {
     writePidRegistry({ version: PID_REGISTRY_VERSION, records: next }, pidFile);
   }
-  await cleanupUntrackedOrphanSubscribeProcesses(opts.alias, knownPids);
+  cleanupUntrackedOrphanSubscribeProcesses(opts.alias, knownPids);
 }
 
 function cleanupActiveRelayWatchers(): void {
@@ -307,100 +286,186 @@ export interface RelayWatcherOptions {
   onChange: OnChange;
   /** Called when state changes (for debug tracking). */
   onStateChange?: (state: RelayWatcherState) => void;
-  /**
-   * Debounce window in ms. Burst events within this window collapse to one
-   * onChange call. Default 50ms — same as BrokerWatcher.
-   */
+  /** Debounce window in ms. Default 50ms. */
   debounceMs?: number;
+  /** Path to the daemon socket. */
+  daemonSocketPath?: string;
+  /**
+   * Use daemon mode (register with subscribe-daemon) instead of spawning
+   * a child process. Default: true. Set to false to fall back to direct
+   * `c2c relay subscribe` child process mode.
+   */
+  useDaemon?: boolean;
 }
 
 export class RelayWatcher {
-  private child: ChildProcess | null = null;
   private debounceTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private _state: RelayWatcherState = "stopped";
   private stopped = false;
   private backoffMs = 1000;
-  private stderrBuffer = "";
-  private lineBuffer = "";
   private readonly debounceMs: number;
   private readonly bin: string;
   private readonly sessionId: string;
+  private readonly useDaemon: boolean;
+  private daemonClient: DaemonClient | null = null;
+  private daemonConnection: { close: () => void; deregister: () => void } | null = null;
+  private daemonRegistered = false;
+  private daemonFailures = 0;
+  private static readonly MAX_DAEMON_FAILURES = 3;
+
+  // Legacy child process mode (fallback)
+  private child: ChildProcess | null = null;
+  private stderrBuffer = "";
+  private lineBuffer = "";
   private trackedPid: number | null = null;
 
   constructor(private readonly opts: RelayWatcherOptions) {
     this.debounceMs = opts.debounceMs ?? 50;
     this.bin = opts.bin ?? "c2c";
-    // Unique session id for the child process to avoid conflicts with the
-    // main c2c MCP session.
     this.sessionId = `relay-watcher-${crypto.randomBytes(8).toString("hex")}`;
+    this.useDaemon = opts.useDaemon ?? true;
   }
 
-  /** True if the watcher is currently active (not stopped). */
   get isRunning(): boolean {
+    if (this.useDaemon) {
+      return this.daemonRegistered && !this.stopped;
+    }
     return this.child !== null && !this.stopped;
   }
 
-  /** Current state of the watcher. */
   get state(): RelayWatcherState {
     return this._state;
   }
 
-  /**
-   * Start watching. Spawns the `c2c relay subscribe` process.
-   * Safe to call if the binary doesn't exist — logs a warning and no-ops.
-   */
   start(): void {
     if (this.stopped) {
       throw new Error("RelayWatcher: cannot start a stopped watcher");
     }
-    if (this.child) return; // idempotent
+    if (this.useDaemon) {
+      this.startDaemonAsync();
+    } else {
+      this.startChildProcess();
+    }
+  }
 
-    // Fire-and-forget: cleanup is best-effort; don't block watcher startup.
+  stop(): void {
+    this.stopped = true;
+    this.setState("stopped");
+    if (this.useDaemon) {
+      this.cleanupDaemon();
+    } else {
+      this.cleanupChildProcess();
+    }
+  }
+
+  // === Daemon mode ===
+
+  private startDaemonAsync(): void {
+    if (this.daemonRegistered) return;
+    registerActiveWatcher(this);
+
+    this.daemonClient = new DaemonClient({
+      bin: this.bin,
+      socketPath: this.opts.daemonSocketPath,
+      relayUrl: subscribeRelayUrl(this.opts.relayUrl),
+    });
+
     void cleanupStaleRelayWatcherProcesses({ alias: this.opts.alias }).catch(() => {});
 
-    // Check if the binary exists (for non-PATH binaries).
+    // Async: ensure daemon is running, then connect
+    void this.daemonClient.ensureDaemon()
+      .then(() => {
+        if (this.stopped) return;
+        this.daemonConnection = this.daemonClient!.connect(
+          this.opts.alias,
+          this.sessionId,
+          // onMessage
+          (msg: DaemonMessage) => {
+            if (this.stopped) return;
+            if (msg.type === "dm") {
+              this.scheduleFire();
+            } else if (msg.type === "state" && msg.state === "connected") {
+              if (this._state !== "connected") {
+                this.setState("connected");
+                this.backoffMs = 1000;
+              }
+            }
+          },
+          // onRegistered — daemon confirmed registration
+          () => {
+            this.daemonRegistered = true;
+            this.daemonFailures = 0;
+            this.setState("connected");
+            this.backoffMs = 1000;
+          },
+          // onError
+          (err: Error) => {
+            if (!this.stopped) {
+              this.daemonRegistered = false;
+              this.daemonConnection = null;
+              this.daemonFailures++;
+              if (this.daemonFailures >= RelayWatcher.MAX_DAEMON_FAILURES) {
+                // Fall back to child process mode
+                this.daemonClient = null;
+                this.startChildProcess();
+              } else {
+                this.scheduleReconnect();
+              }
+            }
+          },
+          // onClose — daemon disconnected
+          () => {
+            if (!this.stopped) {
+              this.daemonRegistered = false;
+              this.daemonConnection = null;
+              this.daemonFailures++;
+              if (this.daemonFailures >= RelayWatcher.MAX_DAEMON_FAILURES) {
+                this.daemonClient = null;
+                this.startChildProcess();
+              } else {
+                this.scheduleReconnect();
+              }
+            }
+          },
+        );
+      })
+      .catch((err: Error) => {
+        // Daemon failed to start — fall back to child process
+        if (!this.stopped) {
+          this.daemonFailures = RelayWatcher.MAX_DAEMON_FAILURES;
+          this.daemonClient = null;
+          this.startChildProcess();
+        }
+      });
+  }
+
+  private cleanupDaemon(): void {
+    if (this.daemonConnection) {
+      this.daemonConnection.deregister();
+      this.daemonConnection = null;
+    }
+    this.daemonRegistered = false;
+    unregisterActiveWatcher(this);
+  }
+
+  // === Child process mode (fallback) ===
+
+  private startChildProcess(): void {
+    if (this.child) return; // idempotent
+
+    void cleanupStaleRelayWatcherProcesses({ alias: this.opts.alias }).catch(() => {});
+
     const binPath = this.bin;
     if (binPath.includes(path.sep)) {
-      if (!fs.existsSync(binPath)) {
-        // Binary doesn't exist — no-op with a diagnostic.
-        // We don't throw because this is a best-effort optimization.
-        return;
-      }
+      if (!fs.existsSync(binPath)) return;
     }
 
     registerActiveWatcher(this);
     this.spawnChild();
   }
 
-  /** Stop watching and kill the child process. Idempotent. */
-  stop(): void {
-    this.stopped = true;
-    this.setState("stopped");
-    this.cleanup();
-  }
-
-  private setState(state: RelayWatcherState): void {
-    if (this._state === state) return;
-    this._state = state;
-    try {
-      this.opts.onStateChange?.(state);
-    } catch {
-      // Swallow — caller is responsible for its own error handling.
-    }
-  }
-
-  private unregisterTrackedPid(): void {
-    if (!this.trackedPid) return;
-    try {
-      unregisterRelayWatcherPid(this.trackedPid, this.sessionId);
-    } catch {
-      // Best-effort cleanup; the next watcher start will prune stale records.
-    }
-    this.trackedPid = null;
-  }
-
-  private cleanup(): void {
+  private cleanupChildProcess(): void {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
@@ -410,12 +475,6 @@ export class RelayWatcher {
       this.reconnectTimer = null;
     }
     if (this.child) {
-      // Release our read ends of the child's pipes before killing it. If the
-      // child has spawned its own children that inherited the stdout/stderr
-      // fds, those grandchildren can keep the write end (and thus our read
-      // end) open after the child dies — which keeps the Node event loop
-      // alive indefinitely. Destroying the streams drops our handles so the
-      // process can exit promptly on stop().
       const pid = this.trackedPid ?? this.child.pid;
       this.child.stdout?.destroy();
       this.child.stderr?.destroy();
@@ -424,9 +483,7 @@ export class RelayWatcher {
       if (pid && pid !== this.trackedPid) {
         try {
           unregisterRelayWatcherPid(pid, this.sessionId);
-        } catch {
-          // Best-effort cleanup; the next watcher start will prune stale records.
-        }
+        } catch { /* best-effort */ }
       }
       this.unregisterTrackedPid();
     }
@@ -434,28 +491,37 @@ export class RelayWatcher {
     this.lineBuffer = "";
   }
 
+  private unregisterTrackedPid(): void {
+    if (!this.trackedPid) return;
+    try {
+      unregisterRelayWatcherPid(this.trackedPid, this.sessionId);
+    } catch { /* best-effort */ }
+    this.trackedPid = null;
+  }
+
+  private setState(state: RelayWatcherState): void {
+    if (this._state === state) return;
+    this._state = state;
+    try {
+      this.opts.onStateChange?.(state);
+    } catch { /* swallow */ }
+  }
+
   private spawnChild(): void {
     if (this.stopped) return;
 
     const args = [
-      "relay",
-      "subscribe",
-      "--alias",
-      this.opts.alias,
-      "--relay-url",
-      subscribeRelayUrl(this.opts.relayUrl),
+      "relay", "subscribe",
+      "--alias", this.opts.alias,
+      "--relay-url", subscribeRelayUrl(this.opts.relayUrl),
     ];
 
     try {
       this.child = spawn(this.bin, args, {
         stdio: ["ignore", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          C2C_MCP_SESSION_ID: this.sessionId,
-        },
+        env: { ...process.env, C2C_MCP_SESSION_ID: this.sessionId },
       });
     } catch {
-      // Spawn failed (e.g. binary not found in PATH). Schedule reconnect.
       this.scheduleReconnect();
       return;
     }
@@ -470,9 +536,7 @@ export class RelayWatcher {
           ownerPid: process.pid,
           startedAt: Date.now(),
         });
-      } catch {
-        // PID tracking is a cleanup aid, not required for relay delivery.
-      }
+      } catch { /* best-effort */ }
     }
 
     this.setState("connected");
@@ -486,7 +550,6 @@ export class RelayWatcher {
     });
 
     this.child.stderr?.on("data", (chunk: string) => {
-      // Capture stderr for diagnostics (last 2KB).
       this.stderrBuffer += chunk;
       if (this.stderrBuffer.length > 2048) {
         this.stderrBuffer = this.stderrBuffer.slice(-2048);
@@ -494,7 +557,6 @@ export class RelayWatcher {
     });
 
     this.child.on("error", () => {
-      // Spawn error — schedule reconnect.
       this.unregisterTrackedPid();
       this.child = null;
       this.scheduleReconnect();
@@ -510,54 +572,41 @@ export class RelayWatcher {
   }
 
   private onStdoutData(chunk: string): void {
-    // Buffer partial lines.
     this.lineBuffer += chunk;
     const lines = this.lineBuffer.split("\n");
-    // Keep the last partial line in the buffer.
     this.lineBuffer = lines.pop() ?? "";
 
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-
       try {
-        // Validate it's JSON (we don't need to parse the content — just
-        // confirm it's a valid frame). pollTick will do the actual drain.
         JSON.parse(trimmed);
-
-        // First successful line means we're connected. Reset backoff.
         if (this._state !== "connected") {
           this.setState("connected");
           this.backoffMs = 1000;
         }
-
-        // Schedule onChange (debounced).
         this.scheduleFire();
       } catch {
-        // Not valid JSON — skip. Could be a startup banner or error.
+        // Not valid JSON — skip
       }
     }
   }
 
   private scheduleFire(): void {
-    if (this.debounceTimer) return; // already scheduled
+    if (this.debounceTimer) return;
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null;
       if (this.stopped) return;
       try {
         this.opts.onChange();
-      } catch {
-        // Swallow — caller is responsible for its own error handling.
-      }
+      } catch { /* swallow */ }
     }, this.debounceMs);
   }
 
   private scheduleReconnect(): void {
     if (this.stopped) return;
-
     this.setState("reconnecting");
 
-    // Clear any existing reconnect timer.
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
     }
@@ -565,10 +614,19 @@ export class RelayWatcher {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.stopped) return;
-      this.spawnChild();
+      if (this.useDaemon) {
+        this.daemonRegistered = false;
+        this.daemonConnection = null;
+        this.startDaemonAsync();
+      } else {
+        this.spawnChild();
+      }
     }, this.backoffMs);
 
-    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (cap).
     this.backoffMs = Math.min(this.backoffMs * 2, 30000);
   }
+}
+
+function subscribeRelayUrl(relayUrl: string): string {
+  return relayUrl.replace(/^https:\/\//i, "http://");
 }
