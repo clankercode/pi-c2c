@@ -24,6 +24,9 @@ export interface C2cDeliveryDetails {
   senders: string[];
   /** Alias of the receiving session, used to distinguish outgoing/broadcast. */
   selfAlias?: string;
+  /** Which broker tier produced this batch. When known, the renderer uses
+   *  this instead of guessing the route from the sender alias. */
+  source?: "local" | "sessions" | "relay";
 }
 
 const KIND = "c2c";
@@ -72,10 +75,14 @@ function useAsciiGlyphs(): boolean {
   return process.env.PI_C2C_ASCII === "1";
 }
 
-/** Pick a route glyph for a sender alias. Relay aliases end with `@<hash>`;
- *  otherwise we can't know the broker from the message alone, so we report the
- *  `unknown` route rather than optimistically claiming sessions delivery. */
-function routeForAlias(alias: string): keyof typeof ROUTES {
+/** Pick a route glyph for a sender alias. When a broker source hint is
+ *  available (from the drain path), use it directly — it's more reliable than
+ *  guessing from the alias shape. Relay aliases end with `@<hash>`; otherwise
+ *  we report `unknown` rather than optimistically claiming sessions delivery. */
+function routeForAlias(alias: string, source?: "local" | "sessions" | "relay"): keyof typeof ROUTES {
+  if (source === "local") return "local";
+  if (source === "sessions") return "sessions";
+  if (source === "relay") return "relay";
   if (parseRelayAlias(alias)) return "relay";
   return "unknown";
 }
@@ -267,7 +274,7 @@ export function buildCompactLine(
     : primarySender === me
       ? "outgoing"
       : "incoming";
-  const route = routeForAlias(primarySender);
+  const route = routeForAlias(primarySender, details?.source);
 
   const prefix = buildPrefix(direction, route, theme);
   const arrow = arrowGlyph(direction);
@@ -323,7 +330,7 @@ export function buildExpandedComponent(
     : primarySender === me
       ? "outgoing"
       : "incoming";
-  const route = routeForAlias(primarySender);
+  const route = routeForAlias(primarySender, details?.source);
   const prefix = buildPrefix(direction, route, theme);
   const arrow = arrowGlyph(direction);
   const arrowSpacer = arrow ? theme.fg("success", ` ${arrow} `) : " ";

@@ -42,6 +42,10 @@ export interface C2cMessage {
   ts: number;
   /** Source that produced this message after the extension merges drain paths. */
   source?: "broker" | "relay";
+  /** Which broker tier drained this message (set at drain time).
+   *  "local" = per-repo home broker, "sessions" = cross-repo sessions broker.
+   *  Relay messages use `source: "relay"` instead. */
+  brokerSource?: "local" | "sessions";
   /** Explicit message kind when a drain path can identify it without guessing. */
   kind?: "dm" | "room";
   /**

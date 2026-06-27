@@ -67,6 +67,11 @@ describe("renderSendResult", () => {
     assert.ok(lines[0].includes("◎"));
   });
 
+  it("renders per-repo send with local route glyph ⌂", () => {
+    const lines = renderSendResult({ kind: "dm", target: "lyra-quill", via: "per-repo" }, false, plainTheme).render(80);
+    assert.ok(lines[0].includes("⌂"));
+  });
+
   it("colors the truncated body ellipsis like the send body", () => {
     const theme = makeRecordingTheme();
     renderSendResult(

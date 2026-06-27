@@ -153,13 +153,17 @@ export async function drainAllSources(cli: C2cCli, opts: {
 }): Promise<C2cMessage[]> {
   const drained: C2cMessage[] = [];
   try {
-    drained.push(...(await cli.pollInbox()));
+    const localMsgs = await cli.pollInbox();
+    for (const m of localMsgs) m.brokerSource = "local";
+    drained.push(...localMsgs);
   } catch {
     // local broker hiccup — ignore
   }
   if (opts.sessionsBrokerRoot) {
     try {
-      drained.push(...(await cli.pollInbox({ brokerRoot: opts.sessionsBrokerRoot })));
+      const sessionMsgs = await cli.pollInbox({ brokerRoot: opts.sessionsBrokerRoot });
+      for (const m of sessionMsgs) m.brokerSource = "sessions";
+      drained.push(...sessionMsgs);
     } catch {
       // sessions broker hiccup — ignore
     }

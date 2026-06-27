@@ -54,6 +54,7 @@ function makeMessage(
           count: details.count ?? 1,
           senders: details.senders ?? ["c2c"],
           selfAlias: details.selfAlias,
+          source: details.source,
         } as C2cDeliveryDetails)
       : undefined,
   };
@@ -170,6 +171,41 @@ describe("buildCompactLine", () => {
     const msg = makeMessage(envelope("remote@a3b2c1d4e5f6", "hello"));
     const line = buildCompactLine(msg, plainTheme, 80);
     assert.ok(line.includes("⇄"));
+  });
+
+  it("shows sessions route (◎) when details.source is 'sessions'", () => {
+    const msg = makeMessage(envelope("pi-88d027", "ping"), {
+      senders: ["pi-88d027"],
+      source: "sessions",
+    });
+    const line = buildCompactLine(msg, plainTheme, 80);
+    assert.match(line, /⧓ c2c\.recv · ▼◎ ← pi-88d027/);
+  });
+
+  it("shows local route (⌂) when details.source is 'local'", () => {
+    const msg = makeMessage(envelope("pi-88d027", "ping"), {
+      senders: ["pi-88d027"],
+      source: "local",
+    });
+    const line = buildCompactLine(msg, plainTheme, 80);
+    assert.match(line, /⧓ c2c\.recv · ▼⌂ ← pi-88d027/);
+  });
+
+  it("shows relay route (⇄) when details.source is 'relay'", () => {
+    const msg = makeMessage(envelope("pi-88d027", "ping"), {
+      senders: ["pi-88d027"],
+      source: "relay",
+    });
+    const line = buildCompactLine(msg, plainTheme, 80);
+    assert.match(line, /⧓ c2c\.recv · ▼⇄ ← pi-88d027/);
+  });
+
+  it("falls back to unknown (◌) when details.source is absent and alias has no @host", () => {
+    const msg = makeMessage(envelope("pi-88d027", "ping"), {
+      senders: ["pi-88d027"],
+    });
+    const line = buildCompactLine(msg, plainTheme, 80);
+    assert.match(line, /⧓ c2c\.recv · ▼◌ ← pi-88d027/);
   });
 
   it("shows the count and senders for multiple messages", () => {

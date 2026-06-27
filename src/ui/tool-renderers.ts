@@ -229,7 +229,7 @@ function sendAction(kind: SendToolDetails["kind"]): string {
 function sendPrefix(kind: SendToolDetails["kind"], via: SendToolDetails["via"], theme: Theme): string {
   const dirGlyph = kind === "broadcast" ? GLYPHS.broadcast : GLYPHS.outgoing;
   const dirColor: import("@earendil-works/pi-coding-agent").ThemeColor = kind === "broadcast" ? "warning" : "accent";
-  const routeGlyph = via === "relay" ? ROUTES.relay : ROUTES.sessions;
+  const routeGlyph = via === "relay" ? ROUTES.relay : via === "per-repo" ? ROUTES.local : ROUTES.sessions;
   return `${theme.fg(dirColor, dirGlyph)}${theme.fg("borderMuted", routeGlyph)}`;
 }
 

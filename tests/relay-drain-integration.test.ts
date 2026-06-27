@@ -95,6 +95,12 @@ test(
       msgs.map((m) => m.content),
       ["from-per-repo", "from-sessions", "from-relay"],
     );
+    assert.deepEqual(
+      msgs.map((m) => m.brokerSource),
+      ["local", "sessions", undefined],
+      "per-repo and sessions messages should be tagged with brokerSource; relay uses source instead",
+    );
+    assert.equal(msgs[2].source, "relay", "relay message should have source='relay'");
   },
 );
 

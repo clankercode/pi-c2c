@@ -301,6 +301,9 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       count: novel.length,
       senders: [...new Set(novel.map((m) => m.from_alias || "unknown"))],
       selfAlias: identity?.alias,
+      source: novel.every((m) => m.brokerSource === novel[0]?.brokerSource)
+        ? novel[0]?.brokerSource
+        : undefined,
     };
     // Track queuedSince for followUp messages (used by the renderer's
     // status line and the debug output).
@@ -341,14 +344,18 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       // break local delivery.
       const drained: C2cMessage[] = [];
       try {
-        drained.push(...(await cli!.pollInbox()));
+        const localMsgs = await cli!.pollInbox();
+        for (const m of localMsgs) m.brokerSource = "local";
+        drained.push(...localMsgs);
         telemetry.recordBrokerOk("local");
       } catch (e) {
         telemetry.recordBrokerError("local", e);
       }
       if (sessionsBrokerRoot) {
         try {
-          drained.push(...(await cli!.pollInbox({ brokerRoot: sessionsBrokerRoot })));
+          const sessionMsgs = await cli!.pollInbox({ brokerRoot: sessionsBrokerRoot });
+          for (const m of sessionMsgs) m.brokerSource = "sessions";
+          drained.push(...sessionMsgs);
           telemetry.recordBrokerOk("sessions");
         } catch (e) {
           telemetry.recordBrokerError("sessions", e);
@@ -373,7 +380,7 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       // Status envelopes are still tracked separately below, but we want
       // the raw arrival count and preview in telemetry.
       for (const m of drained) {
-        const source: MessageSource = m.source === "relay" ? "relay" : "local";
+        const source: MessageSource = m.source === "relay" ? "relay" : m.brokerSource ?? "local";
         telemetry.recordReceived({ from: m.from_alias, content: m.content, source });
       }
       // Silently track peer status envelopes: any message that parses as a
