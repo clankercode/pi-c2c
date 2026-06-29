@@ -16,7 +16,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
-import { DaemonClient, type DaemonMessage } from "./daemon-client.ts";
+import { DaemonClient, installDaemonCleanup, type DaemonMessage } from "./daemon-client.ts";
 
 /** Callback fired when a relay DM frame arrives. */
 export type OnChange = () => void;
@@ -343,6 +343,7 @@ export class RelayWatcher {
       throw new Error("RelayWatcher: cannot start a stopped watcher");
     }
     if (this.useDaemon) {
+      installDaemonCleanup();
       this.startDaemonAsync();
     } else {
       this.startChildProcess();

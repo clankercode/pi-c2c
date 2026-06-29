@@ -34,7 +34,7 @@ import {
   markDelivered,
 } from "./delivery.ts";
 import { clearSpool, gcStaleSpools, readSpool, writeSpool } from "./spool.ts";
-import { formatStatus, installStatusColorPatch, type PiC2cBarState } from "./status.ts";
+import { formatStatus, formatDisabledStatus, installStatusColorPatch, type PiC2cBarState } from "./status.ts";
 import { collectDebugState } from "./debug.ts";
 import { HELP_TOPICS, renderC2cPiHelp } from "./help.ts";
 import { computeHostHash, deriveRelayAlias } from "./relay.ts";
@@ -210,6 +210,9 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   // misses an event (e.g. atomic file replace, network mount, etc.).
   const SAFETY_NET_POLL_MS = 60_000;
   let shuttingDown = false;
+  // Toggle state: when false, c2c is fully disabled (no processes, no registration).
+  // Defaults to true; flipped by /c2c-toggle command.
+  let c2cEnabled = (process.env.C2C_PI_ENABLED ?? "1") !== "0";
   const dedup = new DeliveryDedup();
   const pollIntervalMs = readPollInterval();
   let statusTracker: StatusTracker | null = null;
@@ -465,6 +468,16 @@ export default function c2cExtension(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     ctxRef = ctx;
     shuttingDown = false;
+
+    // If c2c is toggled off, show disabled status and skip all initialization.
+    if (!c2cEnabled) {
+      installStatusColorPatch(ctx.ui.theme, () => barState);
+      ctx.ui.setStatus(STATUS_KEY, formatDisabledStatus(ctx.ui.theme));
+      barState.alias = "c2c off";
+      barState.registered = false;
+      return;
+    }
+
     telemetry.startSession();
     const gs = gstate();
     // Capture the host-provided session id ONCE, before our first write can
@@ -1433,6 +1446,44 @@ export default function c2cExtension(pi: ExtensionAPI): void {
       const s = statusTracker?.getStatus();
       if (!s) return ctx.ui.notify("c2c: not registered yet (no status tracker).", "warning");
       await ctx.ui.select(`state: ${s.state}\nsince: ${new Date(s.since).toISOString()}\nttl_ms: ${s.ttlMs}`, ["Close"]);
+    },
+  });
+
+  pi.registerCommand("c2c-toggle", {
+    description: "Enable or disable c2c entirely. Usage: /c2c-toggle [on|off]. No args = toggle. When disabled, no c2c processes are started and the statusline shows 'c2c off'.",
+    handler: async (args, ctx) => {
+      const arg = args.trim().toLowerCase();
+      // Parse: on|off|<toggle>
+      let target: boolean;
+      if (arg === "on") target = true;
+      else if (arg === "off") target = false;
+      else if (arg === "") target = !c2cEnabled;
+      else return ctx.ui.notify("usage: /c2c-toggle [on|off]", "warning");
+      // No-op if already in the desired state
+      if (target === c2cEnabled) {
+        ctx.ui.notify(`c2c is already ${c2cEnabled ? "on" : "off"}.`, "info");
+        return;
+      }
+      c2cEnabled = target;
+      if (c2cEnabled) {
+        ctx.ui.notify("c2c: enabled. Restart the session to register.", "info");
+        // Show a neutral status until the next session_start re-registers.
+        ctx.ui.setStatus(STATUS_KEY, formatStatus("(restarting)", false, ctx.ui.theme));
+      } else {
+        // Tear down everything immediately.
+        shuttingDown = true;
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        if (perRepoWatcher) { perRepoWatcher.stop(); perRepoWatcher = null; }
+        if (sessionsWatcher) { sessionsWatcher.stop(); sessionsWatcher = null; }
+        if (relayWatcher) { relayWatcher.stop(); relayWatcher = null; }
+        relayWsState = undefined;
+        if (statusTracker) { statusTracker.dispose(); statusTracker = null; }
+        barState.alias = "c2c off";
+        barState.registered = false;
+        ctx.ui.setStatus(STATUS_KEY, formatDisabledStatus(ctx.ui.theme));
+        ctx.ui.notify("c2c: disabled. No c2c processes will be started.", "info");
+        shuttingDown = false;
+      }
     },
   });
 

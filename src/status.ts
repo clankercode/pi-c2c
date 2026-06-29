@@ -56,6 +56,10 @@ export function formatStatus(
   return `${indicator}${aliasPart}${reasonPart}`;
 }
 
+export function formatDisabledStatus(theme: Theme): string {
+  return theme.fg("muted", `${INDICATOR} c2c off`);
+}
+
 /** Shared global state read by the theme monkeypatch for custom footers. */
 export interface PiC2cBarState {
   alias?: string;
@@ -78,6 +82,10 @@ export function renderPatchedStatus(
     // theme.fg("text", ...). Strip any leading bullet the default footer value
     // may have contributed, then render exactly one colored bullet.
     const alias = text.slice(4).trim().replace(/^●+\s*/, "");
+    // Disabled state: gray dot + gray text
+    if (alias === "c2c off") {
+      return `${original("muted", "●")} ${original("muted", "c2c off")}`;
+    }
     const registered = state?.registered ?? false;
     const reason = !registered && state?.reason ? ` (${state.reason})` : "";
     return `${original(registered ? "success" : "warning", "●")} ${original("text", alias)}${reason ? original("muted", reason) : ""}`;
